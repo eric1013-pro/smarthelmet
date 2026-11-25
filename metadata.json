@@ -1,0 +1,6 @@
+{
+  "name": "SmartHelmet CAD — 모듈형 스마트 안전모 3D 모델링 및 2D 설계 도면",
+  "description": "KCs 무천공 탈부착 모듈형 건설 스마트 안전모(Arduino Uno R3 + 5방향 택트 스위치 + 초음파 낙하물 감지 + ATmega128 TPK-128V2.4 중앙 관제) 3D CAD 모델링, 2D 정투상 설계 도면 및 배선 회로 스튜디오",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
