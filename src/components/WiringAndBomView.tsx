@@ -344,11 +344,6 @@ export function WiringAndBomView({
       meta: '상단/후면 초음파(2개) · 5방향 충격 택트(5개)',
     },
     {
-      src: resolvePublicAsset('assets/aistudio/IMG_6117_2237fc66.jpeg'),
-      title: '폴리곤 마감 케이스 참조 형상',
-      meta: '2V 지오데식 삼각면 골판지 외피 (최종 착탈 마감)',
-    },
-    {
       src: resolvePublicAsset('assets/aistudio/IMG_7182_47a9951c.jpeg'),
       title: 'DHT11 온습도 센서 모듈',
       meta: '기온별 초음파 음속 c(T) 실시간 보정 (A0)',
@@ -1074,10 +1069,10 @@ export function WiringAndBomView({
         <section className="space-y-4 pb-6">
           <div>
             <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-              04. 실물 부품 및 마감 형상 참조 자료
+              04. 실물 부품 참조 자료 (보유 부품 기준)
             </h2>
             <p className="text-sm text-slate-600 mt-1">
-              실제 보유한 아두이노 우노 R3 키트, 초음파·택트·온습도·소음 센서, 폴리곤 돔 마감 형상의 치수와 구조를 3D/2D/배선도에 그대로 반영했습니다.
+              실제 보유한 안전모 모체, 아두이노 우노 R3 키트, 초음파·택트·온습도·소음 센서의 실물 치수와 핀 배열을 3D/2D/배선도에 그대로 반영했습니다.
             </p>
           </div>
 
