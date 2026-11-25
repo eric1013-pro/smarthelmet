@@ -1,4 +1,4 @@
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import * as THREE from 'three';
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
 import { RoomEnvironment } from 'three/addons/environments/RoomEnvironment.js';
@@ -91,6 +91,7 @@ export function SmartHelmetViewport({
   onViewportHandle,
 }: SmartHelmetViewportProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
+  const [webglError, setWebglError] = useState<string | null>(null);
 
   // Store latest props in refs so WebGLRenderer mounts ONCE and never resets
   const stateRef = useRef({
@@ -146,11 +147,20 @@ export function SmartHelmetViewport({
     const initial = CAMERA_PRESETS.overview;
     camera.position.set(...initial.pos);
 
-    const renderer = new THREE.WebGLRenderer({
-      antialias: !isSoftwareGl,
-      powerPreference: 'high-performance',
-      preserveDrawingBuffer: true,
-    });
+    let renderer: THREE.WebGLRenderer;
+    try {
+      renderer = new THREE.WebGLRenderer({
+        antialias: !isSoftwareGl,
+        powerPreference: 'high-performance',
+        preserveDrawingBuffer: true,
+      });
+    } catch (err) {
+      setWebglError(
+        err instanceof Error ? err.message : '브라우저에서 WebGL 3D 가속을 초기화할 수 없습니다.',
+      );
+      return;
+    }
+
     renderer.setSize(width, height);
     renderer.setPixelRatio(isSoftwareGl ? 1 : Math.min(window.devicePixelRatio, 2));
     renderer.outputColorSpace = THREE.SRGBColorSpace;
@@ -162,10 +172,15 @@ export function SmartHelmetViewport({
     container.appendChild(renderer.domElement);
 
     // Mandatory studio environment reflections (RoomEnvironment) on all devices
-    const pmrem = new THREE.PMREMGenerator(renderer);
-    const envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
-    scene.environment = envTex;
-    pmrem.dispose();
+    let envTex: THREE.Texture | null = null;
+    try {
+      const pmrem = new THREE.PMREMGenerator(renderer);
+      envTex = pmrem.fromScene(new RoomEnvironment(), 0.04).texture;
+      scene.environment = envTex;
+      pmrem.dispose();
+    } catch {
+      // Continue with direct 3-point lighting if PMREM is unavailable on an older GPU
+    }
 
     // Warm/Cool 3-point studio lighting rig (dynamically shifts to luxury showcase lighting in Cinematic Mode)
     const hemiLight = new THREE.HemisphereLight(0xdbeafe, 0xcbd5e1, 0.85);
@@ -634,7 +649,7 @@ export function SmartHelmetViewport({
       renderer.domElement.removeEventListener('pointerup', handlePointerUp);
       renderer.domElement.removeEventListener('webglcontextlost', handleContextLost);
       rig.dispose();
-      envTex.dispose();
+      envTex?.dispose();
       renderer.dispose();
       if (renderer.domElement.parentNode === container) {
         container.removeChild(renderer.domElement);
@@ -665,6 +680,22 @@ export function SmartHelmetViewport({
   useEffect(() => {
     transitionCameraRef.current?.(cameraPreset);
   }, [cameraPreset, cameraPresetTrigger]);
+
+  if (webglError) {
+    return (
+      <div className="w-full h-full flex items-center justify-center bg-slate-100 p-6">
+        <div className="max-w-md bg-white border border-slate-200 rounded-xl p-6 shadow-xs text-center space-y-2">
+          <h2 className="text-base font-bold text-slate-900">
+            3D WebGL 뷰포트를 표시할 수 없습니다
+          </h2>
+          <p className="text-xs text-slate-600 leading-relaxed">
+            현재 브라우저의 하드웨어 가속(WebGL)이 비활성화되어 있습니다. 브라우저 설정에서 하드웨어 가속을 켜시거나 상단의 <strong>2D 설계 도면</strong> 및 <strong>부품 및 배선도</strong> 탭을 이용해 주세요.
+          </p>
+          <p className="text-[11px] font-mono-tabular text-slate-400 break-all">{webglError}</p>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div
