@@ -250,7 +250,7 @@ export function CinematicOverlay({
               </span>
             </div>
 
-            {/* Export Presentation Video (.webm) */}
+            {/* Export Presentation Video (.mp4) */}
             <div className="flex items-center gap-2">
               {isRecording ? (
                 <button
@@ -259,7 +259,7 @@ export function CinematicOverlay({
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-white bg-red-600 hover:bg-red-700 rounded-md transition-colors whitespace-nowrap"
                 >
                   <Square className="w-3.5 h-3.5" aria-hidden="true" />
-                  녹화 중단 ({recordingPercent}%)
+                  MP4 저장 중단 ({recordingPercent}%)
                 </button>
               ) : (
                 <button
@@ -268,7 +268,7 @@ export function CinematicOverlay({
                   className="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-950 bg-amber-400 hover:bg-amber-300 rounded-md transition-colors whitespace-nowrap"
                 >
                   <Video className="w-3.5 h-3.5" aria-hidden="true" />
-                  발표용 영상 저장 (.webm)
+                  발표용 MP4 영상 저장
                 </button>
               )}
             </div>

@@ -3,8 +3,8 @@ import { ChevronDown, ChevronRight, Download, FolderTree, RotateCcw, Video } fro
 import {
   CINEMATIC_DURATION_SEC,
   evaluateCinematicFrame,
-  type CinematicFrameState,
 } from './engineering/cinematicTimeline';
+import { exportCinematicVideo } from './engineering/mp4Exporter';
 import {
   computePowerBudget,
   detectFallingObject,
@@ -16,7 +16,10 @@ import {
   type ModularConfig,
   type ShellCoverMode,
 } from './engineering/helmetEngine';
-import { SmartHelmetViewport } from './scene/SmartHelmetViewport';
+import {
+  SmartHelmetViewport,
+  type SmartHelmetViewportHandle,
+} from './scene/SmartHelmetViewport';
 import type { InspectablePartMeta } from './scene/helmetGeometry';
 import { BottomCadDock, type DockTabId } from './components/BottomCadDock';
 import { CadViewportTools } from './components/CadViewportTools';
@@ -80,22 +83,16 @@ export default function App() {
   const [fallingSpeedCmPerSec, setFallingSpeedCmPerSec] = useState(0);
   const [inspectedPart, setInspectedPart] = useState<InspectablePartMeta | null>(null);
 
-  // Cinematic Showcase & Video Recording State
+  // Cinematic Showcase & MP4 Video Export State
   const [cinematicTime, setCinematicTime] = useState(0);
   const [cinematicPlaying, setCinematicPlaying] = useState(true);
   const [isRecording, setIsRecording] = useState(false);
+  const [recordingPercent, setRecordingPercent] = useState(0);
 
   const blueprintSvgRef = useRef<SVGSVGElement | null>(null);
   const fallingTimerRef = useRef<number | null>(null);
-  const webglCanvasRef = useRef<HTMLCanvasElement | null>(null);
-  const recorderRef = useRef<{
-    mediaRecorder: MediaRecorder;
-    compCanvas: HTMLCanvasElement;
-    compCtx: CanvasRenderingContext2D;
-    chunks: Blob[];
-    cancelled: boolean;
-  } | null>(null);
-  const cinematicFrameRef = useRef<CinematicFrameState>(evaluateCinematicFrame(0));
+  const viewportHandleRef = useRef<SmartHelmetViewportHandle | null>(null);
+  const exportCancelledRef = useRef(false);
 
   const weightMetrics = useMemo(
     () => evaluateSystemWeightAndCoG(modularConfig),
@@ -127,7 +124,6 @@ export default function App() {
   );
 
   const cinematicFrame = useMemo(() => evaluateCinematicFrame(cinematicTime), [cinematicTime]);
-  cinematicFrameRef.current = cinematicFrame;
 
   // Keyboard shortcut H to toggle dock visibility in 3D view, Space to toggle play in Cinematic
   useEffect(() => {
@@ -144,86 +140,12 @@ export default function App() {
     return () => window.removeEventListener('keydown', onKeyDown);
   }, [mode, isRecording]);
 
-  // Smooth Cinematic Playback Clock + Offscreen 1280x720 Video Compositor Frame Pump
+  // Smooth Cinematic Playback Clock (pauses cleanly while offline MP4 encoder is pumping frames)
   useEffect(() => {
-    if (mode !== 'cinematic' || !cinematicPlaying) return;
+    if (mode !== 'cinematic' || !cinematicPlaying || isRecording) return;
 
     let rafId = 0;
     let prevNow = performance.now();
-
-    const drawCompositeFrame = (frame: CinematicFrameState) => {
-      const rec = recorderRef.current;
-      const glCanvas = webglCanvasRef.current;
-      if (!rec || !glCanvas) return;
-
-      const { compCanvas, compCtx } = rec;
-      const W = compCanvas.width;
-      const H = compCanvas.height;
-
-      compCtx.fillStyle = '#0b1019';
-      compCtx.fillRect(0, 0, W, H);
-
-      // Draw WebGL 3D render cleanly fitted inside 1280x720 cinema frame
-      const srcRatio = glCanvas.width / Math.max(1, glCanvas.height);
-      const dstRatio = W / H;
-      let drawW = W;
-      let drawH = H;
-      let offsetX = 0;
-      let offsetY = 0;
-      if (srcRatio > dstRatio) {
-        drawW = H * srcRatio;
-        offsetX = (W - drawW) / 2;
-      } else {
-        drawH = W / srcRatio;
-        offsetY = (H - drawH) / 2;
-      }
-      compCtx.drawImage(glCanvas, offsetX, offsetY, drawW, drawH);
-
-      // Sleek top & bottom letterbox bars
-      compCtx.fillStyle = 'rgba(6, 9, 15, 0.94)';
-      compCtx.fillRect(0, 0, W, 38);
-      compCtx.fillRect(0, H - 96, W, 96);
-
-      // Subtle watermark top-right
-      compCtx.font = '600 13px "JetBrains Mono", monospace';
-      compCtx.fillStyle = 'rgba(226, 232, 240, 0.72)';
-      compCtx.textAlign = 'right';
-      compCtx.fillText('SMARTHELMET CAD · MODULAR KCs ABE', W - 36, 24);
-
-      // Lower-third Chapter Badge, Title & Subtitle
-      compCtx.save();
-      compCtx.globalAlpha = frame.captionOpacity;
-      compCtx.textAlign = 'left';
-
-      compCtx.font = '600 12px "JetBrains Mono", monospace';
-      compCtx.fillStyle = '#fbbf24';
-      compCtx.fillText(
-        `CHAPTER ${frame.chapter.code} / 06  —  ${frame.chapter.badgeEn}`,
-        40,
-        H - 64,
-      );
-
-      compCtx.font = '700 22px "Plus Jakarta Sans", "Noto Sans KR", sans-serif';
-      compCtx.fillStyle = '#ffffff';
-      compCtx.fillText(frame.chapter.titleKo, 40, H - 36);
-
-      compCtx.font = '400 13px "Noto Sans KR", sans-serif';
-      compCtx.fillStyle = '#cbd5e1';
-      compCtx.fillText(frame.chapter.subtitleKo, 40, H - 14);
-      compCtx.restore();
-
-      // Thin amber timeline progress rule along top edge of bottom letterbox
-      compCtx.fillStyle = 'rgba(255, 255, 255, 0.14)';
-      compCtx.fillRect(0, H - 96, W, 3);
-      compCtx.fillStyle = frame.severity === 'CRITICAL' ? '#ef4444' : '#fbbf24';
-      compCtx.fillRect(0, H - 96, W * frame.progress, 3);
-
-      // Opening fade curtain
-      if (frame.curtainAlpha > 0.01) {
-        compCtx.fillStyle = `rgba(0, 0, 0, ${frame.curtainAlpha})`;
-        compCtx.fillRect(0, 0, W, H);
-      }
-    };
 
     const tick = (now: number) => {
       const dt = Math.min(0.08, Math.max(0.001, (now - prevNow) / 1000));
@@ -231,15 +153,8 @@ export default function App() {
 
       setCinematicTime((prev) => {
         const next = Math.min(CINEMATIC_DURATION_SEC, prev + dt);
-        const frame = evaluateCinematicFrame(next);
-        drawCompositeFrame(frame);
-
         if (next >= CINEMATIC_DURATION_SEC) {
           setCinematicPlaying(false);
-          const rec = recorderRef.current;
-          if (rec && rec.mediaRecorder.state === 'recording') {
-            rec.mediaRecorder.stop();
-          }
         }
         return next;
       });
@@ -249,7 +164,7 @@ export default function App() {
 
     rafId = requestAnimationFrame(tick);
     return () => cancelAnimationFrame(rafId);
-  }, [mode, cinematicPlaying]);
+  }, [mode, cinematicPlaying, isRecording]);
 
   // Optional audio piezo beep when hazard becomes active (both CAD and Cinematic Chapter 5)
   const activeBuzzerRapid =
@@ -258,7 +173,7 @@ export default function App() {
       : hazard.buzzerMode === 'RAPID';
   const activeBuzzerOn =
     mode === 'cinematic'
-      ? cinematicPlaying && cinematicFrame.buzzerActive
+      ? cinematicPlaying && !isRecording && cinematicFrame.buzzerActive
       : hazard.buzzerMode !== 'OFF';
 
   useEffect(() => {
@@ -276,10 +191,7 @@ export default function App() {
       if (fallingTimerRef.current !== null) {
         window.clearInterval(fallingTimerRef.current);
       }
-      if (recorderRef.current && recorderRef.current.mediaRecorder.state === 'recording') {
-        recorderRef.current.cancelled = true;
-        recorderRef.current.mediaRecorder.stop();
-      }
+      exportCancelledRef.current = true;
     };
   }, []);
 
@@ -399,79 +311,51 @@ export default function App() {
   }, []);
 
   const handleCancelRecording = useCallback(() => {
-    const rec = recorderRef.current;
-    if (rec) {
-      rec.cancelled = true;
-      if (rec.mediaRecorder.state === 'recording') {
-        rec.mediaRecorder.stop();
-      }
-    }
+    exportCancelledRef.current = true;
     setIsRecording(false);
   }, []);
 
-  const handleStartRecording = useCallback(() => {
+  const handleStartRecording = useCallback(async () => {
     if (isRecording) return;
     if (mode !== 'cinematic') {
       setMode('cinematic');
     }
-    const glCanvas = webglCanvasRef.current;
-    if (!glCanvas || typeof MediaRecorder === 'undefined') return;
+    const handle = viewportHandleRef.current;
+    if (!handle) return;
 
-    const compCanvas = document.createElement('canvas');
-    compCanvas.width = 1280;
-    compCanvas.height = 720;
-    const compCtx = compCanvas.getContext('2d');
-    if (!compCtx) return;
-
-    const stream = compCanvas.captureStream(30);
-    const preferredTypes = [
-      'video/webm;codecs=vp9',
-      'video/webm;codecs=vp8',
-      'video/webm',
-    ];
-    const mimeType = preferredTypes.find((t) => MediaRecorder.isTypeSupported(t)) || '';
-    const mediaRecorder = new MediaRecorder(
-      stream,
-      mimeType ? { mimeType, videoBitsPerSecond: 6_000_000 } : undefined,
-    );
-
-    const chunks: Blob[] = [];
-    const recObj = {
-      mediaRecorder,
-      compCanvas,
-      compCtx,
-      chunks,
-      cancelled: false,
-    };
-    recorderRef.current = recObj;
-
-    mediaRecorder.ondataavailable = (ev) => {
-      if (ev.data && ev.data.size > 0) {
-        chunks.push(ev.data);
-      }
-    };
-
-    mediaRecorder.onstop = () => {
-      setIsRecording(false);
-      recorderRef.current = null;
-      if (recObj.cancelled || chunks.length === 0) return;
-
-      const blob = new Blob(chunks, { type: mimeType || 'video/webm' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = 'smart-helmet-cinematic-showcase.webm';
-      document.body.appendChild(a);
-      a.click();
-      document.body.removeChild(a);
-      URL.revokeObjectURL(url);
-    };
-
-    setCinematicTime(0);
-    setCinematicPlaying(true);
+    exportCancelledRef.current = false;
+    setCinematicPlaying(false);
     setIsRecording(true);
-    mediaRecorder.start(250);
-  }, [isRecording, mode]);
+    setRecordingPercent(0);
+    setCinematicTime(0);
+
+    try {
+      const result = await exportCinematicVideo({
+        glCanvas: handle.canvas,
+        renderFrame: handle.renderCinematicFrameNow,
+        onProgress: (pct, tSec) => {
+          setRecordingPercent(pct);
+          setCinematicTime(tSec);
+        },
+        isCancelled: () => exportCancelledRef.current,
+        totalWeightG: weightMetrics.totalG,
+        batteryHours: powerMetrics.batteryHours,
+      });
+
+      if (result && !exportCancelledRef.current) {
+        const url = URL.createObjectURL(result.blob);
+        const a = document.createElement('a');
+        a.href = url;
+        a.download = result.filename;
+        document.body.appendChild(a);
+        a.click();
+        document.body.removeChild(a);
+        URL.revokeObjectURL(url);
+      }
+    } finally {
+      setIsRecording(false);
+    }
+  }, [isRecording, mode, powerMetrics.batteryHours, weightMetrics.totalG]);
 
   return (
     <div
@@ -551,8 +435,8 @@ export default function App() {
             >
               <Video className="w-3.5 h-3.5" aria-hidden="true" />
               {isRecording
-                ? `녹화 중 ${Math.round(cinematicFrame.progress * 100)}%`
-                : '발표용 영상 저장'}
+                ? `MP4 저장 중 ${recordingPercent}%`
+                : 'MP4 영상 저장'}
             </button>
           ) : (
             <button
@@ -595,8 +479,8 @@ export default function App() {
               cinematicActive={mode === 'cinematic'}
               cinematicFrame={mode === 'cinematic' ? cinematicFrame : null}
               onInspectPart={setInspectedPart}
-              onCanvasReady={(c) => {
-                webglCanvasRef.current = c;
+              onViewportHandle={(h) => {
+                viewportHandleRef.current = h;
               }}
             />
 
@@ -610,7 +494,7 @@ export default function App() {
                 audioEnabled={audioEnabled}
                 onToggleAudio={() => setAudioEnabled((a) => !a)}
                 isRecording={isRecording}
-                recordingPercent={Math.round(cinematicFrame.progress * 100)}
+                recordingPercent={recordingPercent}
                 onStartRecording={handleStartRecording}
                 onCancelRecording={handleCancelRecording}
                 totalWeightG={weightMetrics.totalG}

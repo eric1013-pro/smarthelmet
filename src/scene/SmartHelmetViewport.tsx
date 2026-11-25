@@ -17,6 +17,11 @@ import type {
   ShellCoverMode,
 } from '../engineering/helmetEngine';
 
+export interface SmartHelmetViewportHandle {
+  canvas: HTMLCanvasElement;
+  renderCinematicFrameNow: (frame: CinematicFrameState) => void;
+}
+
 interface SmartHelmetViewportProps {
   explodeFactor: number; // 0..1
   cameraPreset: CameraPresetId;
@@ -31,7 +36,7 @@ interface SmartHelmetViewportProps {
   cinematicActive?: boolean;
   cinematicFrame?: CinematicFrameState | null;
   onInspectPart: (meta: InspectablePartMeta | null) => void;
-  onCanvasReady?: (canvas: HTMLCanvasElement | null) => void;
+  onViewportHandle?: (handle: SmartHelmetViewportHandle | null) => void;
 }
 
 const CAMERA_PRESETS: Record<
@@ -83,7 +88,7 @@ export function SmartHelmetViewport({
   cinematicActive = false,
   cinematicFrame = null,
   onInspectPart,
-  onCanvasReady,
+  onViewportHandle,
 }: SmartHelmetViewportProps) {
   const mountRef = useRef<HTMLDivElement | null>(null);
 
@@ -116,8 +121,8 @@ export function SmartHelmetViewport({
   const onInspectRef = useRef(onInspectPart);
   onInspectRef.current = onInspectPart;
 
-  const onCanvasReadyRef = useRef(onCanvasReady);
-  onCanvasReadyRef.current = onCanvasReady;
+  const onViewportHandleRef = useRef(onViewportHandle);
+  onViewportHandleRef.current = onViewportHandle;
 
   const triggerRenderRef = useRef<(() => void) | null>(null);
   const transitionCameraRef = useRef<((preset: CameraPresetId) => void) | null>(null);
@@ -155,7 +160,6 @@ export function SmartHelmetViewport({
     renderer.shadowMap.type = THREE.PCFSoftShadowMap;
 
     container.appendChild(renderer.domElement);
-    onCanvasReadyRef.current?.(renderer.domElement);
 
     // Mandatory studio environment reflections (RoomEnvironment) on all devices
     const pmrem = new THREE.PMREMGenerator(renderer);
@@ -596,6 +600,22 @@ export function SmartHelmetViewport({
     });
     resizeObserver.observe(container);
 
+    // Expose synchronous frame renderer for deterministic H.264 MP4 encoding
+    onViewportHandleRef.current?.({
+      canvas: renderer.domElement,
+      renderCinematicFrameNow: (frame: CinematicFrameState) => {
+        if (disposed) return;
+        stateRef.current = {
+          ...stateRef.current,
+          cinematicActive: true,
+          cinematicFrame: frame,
+        };
+        applyDynamicSceneState(frame.timeSec * 1000, 1 / 30);
+        controls.update();
+        renderer.render(scene, camera);
+      },
+    });
+
     // Synchronous first-frame render so initial paint is never blank
     applyDynamicSceneState(performance.now(), 0.016);
     controls.update();
@@ -605,7 +625,7 @@ export function SmartHelmetViewport({
       disposed = true;
       cancelAnimationFrame(frameId);
       clearTimeout(frameId);
-      onCanvasReadyRef.current?.(null);
+      onViewportHandleRef.current?.(null);
       resizeObserver.disconnect();
       controls.removeEventListener('start', handleControlStart);
       controls.removeEventListener('change', handleControlChange);
