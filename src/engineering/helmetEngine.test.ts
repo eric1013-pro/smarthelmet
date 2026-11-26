@@ -8,6 +8,7 @@ import {
   evaluateSystemWeightAndCoG,
   computePowerBudget,
   evaluateHazardState,
+  getCoupledTactileSwitches,
 } from './helmetEngine';
 
 test('calculateSpeedOfSound follows Rudyk et al. linear temperature model', () => {
@@ -139,4 +140,18 @@ test('evaluateHazardState formats strict 16x2 LCD output and 8 green worker LEDs
   assert.equal(impact.severity, 'CRITICAL');
   assert.equal(impact.lcdLine1.trim(), 'ALERT: HIT E-RGT');
   assert.equal(impact.buzzerMode, 'RAPID');
+});
+
+test('getCoupledTactileSwitches couples neighbor switches under inter-shell polygon deflection', () => {
+  const idle = getCoupledTactileSwitches('NONE');
+  assert.equal(idle.primary, null);
+  assert.deepEqual(idle.coupled, []);
+
+  const north = getCoupledTactileSwitches('NORTH');
+  assert.equal(north.primary, 'NORTH');
+  assert.deepEqual(north.coupled, ['CROWN', 'EAST', 'WEST']);
+
+  const crown = getCoupledTactileSwitches('CROWN');
+  assert.equal(crown.primary, 'CROWN');
+  assert.equal(crown.coupled.length, 4);
 });

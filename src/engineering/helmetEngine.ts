@@ -149,16 +149,16 @@ export const BOM_PARTS: BomPartItem[] = [
   {
     id: 'tact-switches-5',
     calloutNo: 4,
-    nameKo: '5방향 충격·전도 감지 택트 스위치 (동서남북+정수리)',
-    model: '12×12mm 대형 택트 스위치 + 원형 캡',
+    nameKo: '5방향 틈새 연동 택트 스위치 (동서남북+정수리)',
+    model: '12×12mm 대형 택트 스위치 + 원형 캡 (외피-모체 틈새 배치)',
     qty: 5,
-    zone: '전(N)·후(S)·우(E)·좌(W) 테두리 + 정수리(Top)',
+    zone: '안전모 모체 ↔ 폴리곤 마감 케이스 틈새 5개소',
     weightG: 15,
     powerMw: 2,
     mcuPins: 'Arduino D6(N), D7(S), D8(E), D9(W), D10(Top)',
     photoPath: '/assets/aistudio/IMG_7181_d6d2b996.jpeg',
     engineeringNote:
-      'INPUT_PULLUP + 0.1µF RC 필터 + 45ms 소프트웨어 시프트 레지스터 디바운싱으로 접점 바운스 제거.',
+      '폴리곤 외피와 안전모 모체 사이의 15mm 틈새에 배치. 외피 한쪽이 눌릴 때 인접 택트 스위치가 함께 연동 눌림되어 충격 방향 판별 정확도를 높입니다.',
   },
   {
     id: 'hc-sr04-rear',
@@ -177,16 +177,16 @@ export const BOM_PARTS: BomPartItem[] = [
   {
     id: 'leds-rg',
     calloutNo: 6,
-    nameKo: '양방향 시각 경보 LED 어레이 (적색 3 + 녹색 3)',
-    model: '5mm 고휘도 Red(3) / Green(3) LED',
-    qty: 6,
-    zone: '전면 챙 + 좌/우 측면 모듈 바',
-    weightG: 8,
-    powerMw: 180,
-    mcuPins: 'Arduino D11(적색, 220Ω×3), D12(녹색, 150Ω×3)',
+    nameKo: '전면 최적화 경고 LED 모듈 (적색 1 + 녹색 1 · 최소화)',
+    model: '5mm 고휘도 Red(1) / Green(1) LED',
+    qty: 2,
+    zone: '전면 이마 최적 가시 베젤 (외피 단일 개구부)',
+    weightG: 3,
+    powerMw: 60,
+    mcuPins: 'Arduino D11(적색, 220Ω), D12(녹색, 150Ω)',
     photoPath: '/assets/aistudio/IMG_6101_9dd7dd89.png',
     engineeringNote:
-      'IEC 60073 표준 적용: 정상 시 녹색 점등, 주의 1Hz 점멸, 비상 2.5Hz 적색 고속 점멸로 양방향 시인성 확보.',
+      '전방 180° 접근 시야 최적 위치(전면 이마 상단)에 적·녹 각 1개만 최소 배치해 측면 배선과 외피 타공을 없애고 소비전력을 67% 절감했습니다.',
   },
   {
     id: 'arduino-uno',
@@ -219,17 +219,17 @@ export const BOM_PARTS: BomPartItem[] = [
   {
     id: 'dht11',
     calloutNo: 9,
-    nameKo: '온습도 보정 센서 (선택 탈부착)',
-    model: 'DHT11 모듈',
+    nameKo: '헬멧 내부 두부 온습도 센서 (열사병 감지)',
+    model: 'DHT11 모듈 (안전모 내부 서스펜션 장착)',
     qty: 1,
-    zone: '우측 후면 보조 클립 슬롯',
+    zone: '헬멧 안쪽 이마-두정부 통기 공간 (폴리곤 케이스 내부)',
     weightG: 4,
     powerMw: 12,
     mcuPins: 'Arduino A0 (DATA, 10kΩ 풀업)',
     photoPath: '/assets/aistudio/IMG_7182_47a9951c.jpeg',
     optionalKey: 'dht11',
     engineeringNote:
-      '기온에 따른 초음파 음속 c = 331.3 + 0.606T 실시간 보정 (혹한기 -15°C 기준 13cm 오차 제거).',
+      '작업자 머리 위 헬멧 내부 공기층(직접 땀 접촉 회피 · 열기 대류 집중부)에 배치해 온열질환·내부 습도를 감지하며 초음파 음속 보정에 활용.',
   },
   {
     id: 'mq2-gas',
@@ -428,6 +428,34 @@ const IMPACT_CODE_MAP: Record<ImpactDirection, { code: string; ko: string }> = {
   CROWN: { code: 'TOP', ko: '정수리 충격' },
 };
 
+const COUPLED_TACTILE_MAP: Record<
+  Exclude<ImpactDirection, 'NONE'>,
+  Array<Exclude<ImpactDirection, 'NONE'>>
+> = {
+  NORTH: ['CROWN', 'EAST', 'WEST'],
+  SOUTH: ['CROWN', 'EAST', 'WEST'],
+  EAST: ['CROWN', 'NORTH'],
+  WEST: ['CROWN', 'NORTH'],
+  CROWN: ['NORTH', 'SOUTH', 'EAST', 'WEST'],
+};
+
+/**
+ * Computes primary & adjacent coupled tactile switches depressed simultaneously
+ * when the outer polygon shell deflects across the inter-shell gap toward the helmet.
+ */
+export function getCoupledTactileSwitches(dir: ImpactDirection): {
+  primary: Exclude<ImpactDirection, 'NONE'> | null;
+  coupled: Array<Exclude<ImpactDirection, 'NONE'>>;
+} {
+  if (dir === 'NONE') {
+    return { primary: null, coupled: [] };
+  }
+  return {
+    primary: dir,
+    coupled: COUPLED_TACTILE_MAP[dir],
+  };
+}
+
 /**
  * Deterministic central hazard state machine shared between the 3D Helmet,
  * 3D ATmega128 TPK-128V2.4 Control Center (16x2 LCD + 8 Green LEDs + 7-Seg), and UI HUD.
@@ -460,6 +488,7 @@ export function evaluateHazardState(inputs: HazardInputs): HazardOutput {
   if (inputs.impactDirection !== 'NONE') {
     workerGreenLeds[0] = false;
     const info = IMPACT_CODE_MAP[inputs.impactDirection];
+    const coupledCount = getCoupledTactileSwitches(inputs.impactDirection).coupled.length;
     return {
       severity: 'CRITICAL',
       lcdLine1: fitLcd16(`ALERT: HIT ${info.code}`),
@@ -470,8 +499,8 @@ export function evaluateHazardState(inputs: HazardInputs): HazardOutput {
       helmetRedHz: 2.5,
       helmetGreenOn: false,
       buzzerMode: 'RAPID',
-      alertTitleKo: `택트 스위치 충격 감지 (${info.ko})`,
-      alertDetailKo: '전도·충돌 충격 감지 — 정수리 능동 부저 및 적색 LED 2.5Hz 비상 경보 작동 중',
+      alertTitleKo: `틈새 택트 연동 충격 감지 (${info.ko})`,
+      alertDetailKo: `외피 틈새 주 스위치 + 인접 ${coupledCount}개 스위치 동시 연동 눌림으로 정확도 검증 완료`,
     };
   }
 

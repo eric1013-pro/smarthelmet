@@ -432,7 +432,7 @@ function StepIllustrationSvg({
       viewBox="0 0 820 460"
       className={`w-full h-auto block ${compact ? 'max-h-[280px]' : ''}`}
       xmlns="http://www.w3.org/2000/svg"
-      aria-label={`레고식 조립 설명서 STEP ${stepNo}`}
+      aria-label={`단계별 조립 설명서 STEP ${stepNo}`}
     >
       {/* Classic LEGO Instruction Page Soft Cool-Blue Backdrop */}
       <rect x="0" y="0" width="820" height="460" rx="10" fill="#eaf3fb" />
@@ -736,7 +736,7 @@ export function AssemblyManualView({
             </span>
             <div>
               <div className="text-sm font-bold text-slate-900">
-                스마트 안전모 레고식 단계별 조립 설명서 (총 8단계 · 예상 50분)
+                스마트 안전모 단계별 조립 설명서 (총 8단계 · 예상 50분)
               </div>
               <div className="text-xs text-slate-500">
                 실제 부품을 책상에 올려두고 단계별 필요 부품과 화살표 방향대로 따라 조립하세요.

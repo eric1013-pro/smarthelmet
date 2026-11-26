@@ -8,13 +8,18 @@ import {
   type SmartHelmetRig,
 } from './helmetGeometry';
 import type { CinematicFrameState } from '../engineering/cinematicTimeline';
-import type {
-  CadDisplayMode,
-  CameraPresetId,
-  HazardOutput,
-  ImpactDirection,
-  ModularConfig,
-  ShellCoverMode,
+import {
+  evaluateMountStageProgress,
+  getActiveMountStepMeta,
+} from '../engineering/mountingVisualizer';
+import {
+  getCoupledTactileSwitches,
+  type CadDisplayMode,
+  type CameraPresetId,
+  type HazardOutput,
+  type ImpactDirection,
+  type ModularConfig,
+  type ShellCoverMode,
 } from '../engineering/helmetEngine';
 
 export interface SmartHelmetViewportHandle {
@@ -24,6 +29,8 @@ export interface SmartHelmetViewportHandle {
 
 interface SmartHelmetViewportProps {
   explodeFactor: number; // 0..1
+  mountProgress: number; // 0..6 continuous sensor mounting visualization progress
+  mountVisualizing: boolean; // true while actively inspecting/playing sensor mounting steps
   cameraPreset: CameraPresetId;
   cameraPresetTrigger: number;
   displayMode: CadDisplayMode;
@@ -76,6 +83,8 @@ function detectSoftwareGl(): boolean {
 
 export function SmartHelmetViewport({
   explodeFactor,
+  mountProgress,
+  mountVisualizing,
   cameraPreset,
   cameraPresetTrigger,
   displayMode,
@@ -96,6 +105,8 @@ export function SmartHelmetViewport({
   // Store latest props in refs so WebGLRenderer mounts ONCE and never resets
   const stateRef = useRef({
     explodeFactor,
+    mountProgress,
+    mountVisualizing,
     displayMode,
     coverMode,
     showCones,
@@ -108,6 +119,8 @@ export function SmartHelmetViewport({
   });
   stateRef.current = {
     explodeFactor,
+    mountProgress,
+    mountVisualizing,
     displayMode,
     coverMode,
     showCones,
@@ -224,6 +237,7 @@ export function SmartHelmetViewport({
 
     // Smooth transition & render scheduling state
     let currentExplode = stateRef.current.explodeFactor;
+    let currentMount = stateRef.current.mountProgress;
     let appliedDisplayMode: CadDisplayMode | null = null;
     let appliedCoverMode: ShellCoverMode | null = null;
     let appliedCinematicLook: boolean | null = null;
@@ -385,7 +399,7 @@ export function SmartHelmetViewport({
           rig.sonarWaveMesh.visible = false;
         }
 
-        // 6. Tactile Switches depressed highlight
+        // 6. Inter-shell Tactile Switches: primary full press (red) + coupled neighbor half press (amber)
         const dirs: Array<Exclude<ImpactDirection, 'NONE'>> = [
           'NORTH',
           'SOUTH',
@@ -393,20 +407,23 @@ export function SmartHelmetViewport({
           'WEST',
           'CROWN',
         ];
+        const cinemaCoupled = getCoupledTactileSwitches(cf.impactDirection);
         for (const dir of dirs) {
           const entry = rig.tactSwitchCaps[dir];
-          const hit = cf.impactDirection === dir;
-          entry.mesh.position.y = entry.baseLocalPos.y - (hit ? 0.025 : 0);
-          entry.mat.color.setHex(hit ? 0xef4444 : 0x2563eb);
-          entry.mat.emissive.setHex(hit ? 0xef4444 : 0x000000);
-          entry.mat.emissiveIntensity = hit ? 1.8 : 0;
+          const isPrimary = cinemaCoupled.primary === dir;
+          const isNeighbor = cinemaCoupled.coupled.includes(dir);
+          entry.mesh.position.y =
+            entry.baseLocalPos.y - (isPrimary ? 0.026 : isNeighbor ? 0.014 : 0);
+          entry.mat.color.setHex(isPrimary ? 0xef4444 : isNeighbor ? 0xf59e0b : 0x2563eb);
+          entry.mat.emissive.setHex(isPrimary ? 0xef4444 : isNeighbor ? 0xf59e0b : 0x000000);
+          entry.mat.emissiveIntensity = isPrimary ? 1.8 : isNeighbor ? 1.05 : 0;
         }
 
         return false;
       }
 
       // =========================================================
-      // BRANCH B: INTERACTIVE 3D CAD MODELING MODE
+      // BRANCH B: INTERACTIVE 3D CAD MODELING & MOUNTING MODE
       // =========================================================
       const targetExplode = st.explodeFactor;
       if (Math.abs(currentExplode - targetExplode) > 0.002) {
@@ -420,12 +437,112 @@ export function SmartHelmetViewport({
         currentExplode = targetExplode;
       }
 
+      const targetMount = st.mountProgress;
+      if (Math.abs(currentMount - targetMount) > 0.004) {
+        currentMount = isSoftwareGl
+          ? targetMount
+          : THREE.MathUtils.damp(currentMount, targetMount, 7, dt);
+        if (Math.abs(currentMount - targetMount) > 0.004) {
+          needsMoreFrames = true;
+        }
+      } else {
+        currentMount = targetMount;
+      }
+
+      if (appliedDisplayMode !== st.displayMode || appliedCoverMode !== st.coverMode) {
+        rig.applyCadModes(st.displayMode, st.coverMode);
+        appliedDisplayMode = st.displayMode;
+        appliedCoverMode = st.coverMode;
+      }
+
       for (const item of rig.explodableParts) {
-        item.group.position.set(
-          item.basePos.x + item.explodeOffset.x * currentExplode,
-          item.basePos.y + item.explodeOffset.y * currentExplode,
-          item.basePos.z + item.explodeOffset.z * currentExplode,
-        );
+        const stageProg = evaluateMountStageProgress(currentMount, item.stage);
+        const remMount = 1 - stageProg;
+        const mountLiftMult = item.stage === 'frame' ? 1.85 : item.stage === 'cover' ? 1.3 : 1.5;
+
+        if (item.stage === 'cover') {
+          const coverVisible = st.coverMode !== 'open' && stageProg > 0.01;
+          item.group.visible = coverVisible;
+          if (coverVisible) {
+            const totalOffsetFactor = currentExplode + remMount * mountLiftMult;
+            // Subtle inward polygon shell deflection toward helmet when external impact presses the shell
+            let defX = 0;
+            let defY = 0;
+            let defZ = 0;
+            if (totalOffsetFactor < 0.05 && st.impactDirection !== 'NONE') {
+              const flex = 0.028;
+              if (st.impactDirection === 'NORTH') defZ = -flex;
+              else if (st.impactDirection === 'SOUTH') defZ = flex;
+              else if (st.impactDirection === 'EAST') defX = -flex;
+              else if (st.impactDirection === 'WEST') defX = flex;
+              else if (st.impactDirection === 'CROWN') defY = -flex;
+            }
+            item.group.position.set(
+              item.basePos.x + item.explodeOffset.x * totalOffsetFactor + defX,
+              item.basePos.y + item.explodeOffset.y * totalOffsetFactor + defY,
+              item.basePos.z + item.explodeOffset.z * totalOffsetFactor + defZ,
+            );
+          }
+          continue;
+        }
+
+        const isOptional = item.stage === 'optional';
+        if (isOptional) {
+          const optEnabled =
+            (item.group === rig.optionalGroups.dht11 && st.modularConfig.includeDht11) ||
+            (item.group === rig.optionalGroups.mq2 && st.modularConfig.includeMq2) ||
+            (item.group === rig.optionalGroups.ky037 && st.modularConfig.includeKy037);
+          item.group.visible = optEnabled && stageProg > 0.01;
+        } else {
+          item.group.visible = stageProg > 0.01;
+        }
+
+        if (item.group.visible) {
+          const totalOffsetFactor = currentExplode + remMount * mountLiftMult;
+          item.group.position.set(
+            item.basePos.x + item.explodeOffset.x * totalOffsetFactor,
+            item.basePos.y + item.explodeOffset.y * totalOffsetFactor,
+            item.basePos.z + item.explodeOffset.z * totalOffsetFactor,
+          );
+        }
+      }
+
+      // Position glowing cyan alignment guide ring on the active mounting zone when visualizing
+      if (st.mountVisualizing && currentMount > 0.05) {
+        const activeMeta = getActiveMountStepMeta(currentMount);
+        rig.mountGuideRing.visible = true;
+        const pulse = 1 + Math.sin(nowMs * 0.006) * 0.08;
+        if (activeMeta.stage === 'frame') {
+          rig.mountGuideRing.position.set(0, 0.08, 0.0);
+          rig.mountGuideRing.rotation.set(-Math.PI / 2, 0, 0);
+          rig.mountGuideRing.scale.set(3.25 * pulse, 3.65 * pulse, 1);
+        } else if (activeMeta.stage === 'rear') {
+          rig.mountGuideRing.position.set(0, 0.36, -1.56);
+          rig.mountGuideRing.rotation.set(0, 0, 0);
+          rig.mountGuideRing.scale.set(1.35 * pulse, 1.35 * pulse, 1);
+        } else if (activeMeta.stage === 'crown') {
+          rig.mountGuideRing.position.set(0, 1.56, 0.06);
+          rig.mountGuideRing.rotation.set(-Math.PI / 2, 0, 0);
+          rig.mountGuideRing.scale.set(1.25 * pulse, 1.25 * pulse, 1);
+        } else if (activeMeta.stage === 'perimeter') {
+          rig.mountGuideRing.position.set(0, 0.34, 1.52);
+          rig.mountGuideRing.rotation.set(0, 0, 0);
+          rig.mountGuideRing.scale.set(1.15 * pulse, 1.15 * pulse, 1);
+        } else if (activeMeta.stage === 'optional') {
+          rig.mountGuideRing.position.set(0.35, 0.68, 1.05);
+          rig.mountGuideRing.rotation.set(0.48, 0.38, 0);
+          rig.mountGuideRing.scale.set(0.68 * pulse, 0.68 * pulse, 1);
+        } else {
+          rig.mountGuideRing.position.set(0, 1.62, -0.06);
+          rig.mountGuideRing.rotation.set(-Math.PI / 2, 0, 0);
+          rig.mountGuideRing.scale.set(2.4 * pulse, 2.8 * pulse, 1);
+        }
+        rig.mountGuideMat.opacity = 0.45 + Math.abs(Math.sin(nowMs * 0.005)) * 0.35;
+        if (!isSoftwareGl) {
+          needsMoreFrames = true;
+        }
+      } else {
+        rig.mountGuideRing.visible = false;
       }
 
       if (cameraTransitionActive) {
@@ -450,17 +567,10 @@ export function SmartHelmetViewport({
         }
       }
 
-      if (appliedDisplayMode !== st.displayMode || appliedCoverMode !== st.coverMode) {
-        rig.applyCadModes(st.displayMode, st.coverMode);
-        appliedDisplayMode = st.displayMode;
-        appliedCoverMode = st.coverMode;
-      }
-
-      rig.ultrasonicConeTop.visible = st.showCones;
-      rig.ultrasonicConeRear.visible = st.showCones;
-      rig.optionalGroups.dht11.visible = st.modularConfig.includeDht11;
-      rig.optionalGroups.mq2.visible = st.modularConfig.includeMq2;
-      rig.optionalGroups.ky037.visible = st.modularConfig.includeKy037;
+      const crownMounted = evaluateMountStageProgress(currentMount, 'crown') > 0.85;
+      const rearMounted = evaluateMountStageProgress(currentMount, 'rear') > 0.85;
+      rig.ultrasonicConeTop.visible = (st.showCones || st.fallingProgress !== null) && crownMounted;
+      rig.ultrasonicConeRear.visible = st.showCones && rearMounted;
 
       if (st.fallingProgress !== null) {
         rig.fallingObjectMesh.visible = true;
@@ -512,13 +622,16 @@ export function SmartHelmetViewport({
         'WEST',
         'CROWN',
       ];
+      const cadCoupled = getCoupledTactileSwitches(st.impactDirection);
       for (const dir of dirs) {
         const entry = rig.tactSwitchCaps[dir];
-        const hit = st.impactDirection === dir;
-        entry.mesh.position.y = entry.baseLocalPos.y - (hit ? 0.025 : 0);
-        entry.mat.color.setHex(hit ? 0xef4444 : 0x2563eb);
-        entry.mat.emissive.setHex(hit ? 0xef4444 : 0x000000);
-        entry.mat.emissiveIntensity = hit ? 1.4 : 0;
+        const isPrimary = cadCoupled.primary === dir;
+        const isNeighbor = cadCoupled.coupled.includes(dir);
+        entry.mesh.position.y =
+          entry.baseLocalPos.y - (isPrimary ? 0.026 : isNeighbor ? 0.014 : 0);
+        entry.mat.color.setHex(isPrimary ? 0xef4444 : isNeighbor ? 0xf59e0b : 0x2563eb);
+        entry.mat.emissive.setHex(isPrimary ? 0xef4444 : isNeighbor ? 0xf59e0b : 0x000000);
+        entry.mat.emissiveIntensity = isPrimary ? 1.7 : isNeighbor ? 1.05 : 0;
       }
 
       return needsMoreFrames;
@@ -665,6 +778,8 @@ export function SmartHelmetViewport({
     triggerRenderRef.current?.();
   }, [
     explodeFactor,
+    mountProgress,
+    mountVisualizing,
     displayMode,
     coverMode,
     showCones,

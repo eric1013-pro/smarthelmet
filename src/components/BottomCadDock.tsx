@@ -1,4 +1,4 @@
-import { ChevronDown, ChevronUp, Volume2, VolumeX } from 'lucide-react';
+import { ChevronUp, Pause, Play, Volume2, VolumeX } from 'lucide-react';
 import {
   calculateSpeedOfSound,
   type CameraPresetId,
@@ -9,6 +9,10 @@ import {
   type ShellCoverMode,
   type WeightAndCoGMetrics,
 } from '../engineering/helmetEngine';
+import {
+  getActiveMountStepMeta,
+  MOUNT_STEPS,
+} from '../engineering/mountingVisualizer';
 
 export type DockTabId = 'assembly' | 'simulation' | 'modules';
 
@@ -19,6 +23,11 @@ interface BottomCadDockProps {
   onChangeTab: (tab: DockTabId) => void;
   explodeFactor: number;
   onChangeExplode: (v: number) => void;
+  mountProgress: number;
+  mountPlaying: boolean;
+  mountVisualizing: boolean;
+  onSelectMountStep: (step: number) => void;
+  onToggleMountPlay: () => void;
   cameraPreset: CameraPresetId;
   onSelectCamera: (preset: CameraPresetId) => void;
   showCones: boolean;
@@ -62,6 +71,11 @@ export function BottomCadDock({
   onChangeTab,
   explodeFactor,
   onChangeExplode,
+  mountProgress,
+  mountPlaying,
+  mountVisualizing,
+  onSelectMountStep,
+  onToggleMountPlay,
   cameraPreset,
   onSelectCamera,
   showCones,
@@ -82,35 +96,37 @@ export function BottomCadDock({
   onToggleAudio,
 }: BottomCadDockProps) {
   const soundSpeed = calculateSpeedOfSound(modularConfig.ambientTempC);
+  const activeMountMeta = getActiveMountStepMeta(mountProgress);
+  const isOpen = !collapsed;
 
   return (
     <div
       className="fixed bottom-4 left-1/2 -translate-x-1/2 z-20 w-[min(920px,95vw)] flex flex-col items-center pointer-events-none"
       data-testid="bottom-cad-dock"
     >
-      {/* Collapse / Expand Handle */}
+      {/* Effortless Collapse / Expand Handle */}
       <button
         type="button"
         onClick={onToggleCollapse}
-        aria-expanded={!collapsed}
-        className="pointer-events-auto mb-1.5 inline-flex items-center gap-1.5 px-3 py-1 text-xs font-medium text-slate-700 bg-white border border-slate-300 rounded-md shadow-xs hover:bg-slate-50 transition-colors whitespace-nowrap"
+        aria-expanded={isOpen}
+        className="pointer-events-auto cad-panel-surface mb-2 inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-slate-800 bg-white border border-slate-200 rounded-lg shadow-xs hover:bg-slate-50 active:scale-[0.98] transition-all whitespace-nowrap cursor-pointer"
       >
-        {collapsed ? (
-          <>
-            <ChevronUp className="w-3.5 h-3.5" aria-hidden="true" />
-            컨트롤 펼치기
-          </>
-        ) : (
-          <>
-            <ChevronDown className="w-3.5 h-3.5" aria-hidden="true" />
-            컨트롤 숨기기
-          </>
-        )}
+        <ChevronUp
+          data-open={isOpen}
+          className="cad-chevron w-3.5 h-3.5 text-blue-600"
+          aria-hidden="true"
+        />
+        <span>{collapsed ? '컨트롤 펼치기' : '컨트롤 숨기기'}</span>
       </button>
 
-      {/* Main Unified Solid Dock Surface (No backdrop-filter over WebGL) */}
-      {!collapsed && (
-        <div className="pointer-events-auto w-full bg-white border border-slate-200 rounded-xl shadow-md overflow-hidden">
+      {/* Smooth Spring-Animated Unified Solid Dock Surface */}
+      <div
+        className="cad-drawer-grid cad-drawer-up w-full"
+        data-open={isOpen}
+        aria-hidden={!isOpen}
+      >
+        <div className="cad-drawer-inner">
+          <div className="pointer-events-auto w-full bg-white border border-slate-200 rounded-xl shadow-md overflow-hidden">
           {/* Dock Header Bar: 3 Tabs + Audio Toggle */}
           <div className="flex items-center justify-between gap-4 px-4 py-2 border-b border-slate-200 bg-slate-50">
             <div className="flex items-center gap-1" role="tablist" aria-label="3D 모델링 제어 탭">
@@ -164,12 +180,80 @@ export function BottomCadDock({
             </div>
           </div>
 
-          {/* Tab 1: Assembly & Camera Controls */}
+          {/* Tab 1: Assembly, Sensor Mounting Visualization & Camera Controls */}
           {activeTab === 'assembly' && (
-            <div className="px-4 py-3 flex flex-col gap-3">
+            <div className="px-4 py-3 flex flex-col gap-2.5">
+              {/* Row 1: Interactive 7-Stage Sensor Mounting Visualizer */}
+              <div className="flex flex-col gap-1.5 pb-2.5 border-b border-slate-100">
+                <div className="flex flex-wrap items-center justify-between gap-2">
+                  <div className="flex items-center gap-2">
+                    <span className="text-xs font-semibold text-slate-900 whitespace-nowrap">
+                      센서 장착 시각화
+                    </span>
+                    <button
+                      type="button"
+                      onClick={onToggleMountPlay}
+                      className={`inline-flex items-center gap-1 px-2.5 py-1 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                        mountPlaying
+                          ? 'bg-amber-600 text-white hover:bg-amber-700'
+                          : 'bg-blue-600 text-white hover:bg-blue-700'
+                      }`}
+                    >
+                      {mountPlaying ? (
+                        <>
+                          <Pause className="w-3 h-3" aria-hidden="true" />
+                          장착 일시정지
+                        </>
+                      ) : (
+                        <>
+                          <Play className="w-3 h-3" aria-hidden="true" />
+                          장착 과정 재생
+                        </>
+                      )}
+                    </button>
+                  </div>
+
+                  {mountVisualizing && (
+                    <span className="text-[11px] text-blue-700 font-medium truncate">
+                      {activeMountMeta.title} · <span className="font-mono-tabular">{activeMountMeta.pins}</span>
+                    </span>
+                  )}
+                </div>
+
+                <div
+                  className="grid grid-cols-4 sm:grid-cols-7 gap-1"
+                  role="group"
+                  aria-label="센서 장착 단계 선택"
+                >
+                  {MOUNT_STEPS.map((st) => {
+                    const currentRounded = Math.round(mountProgress);
+                    const isCurrent = mountVisualizing && currentRounded === st.step;
+                    const isMounted = mountProgress >= st.step - 0.05 && (st.step < 6 || coverMode !== 'open');
+                    return (
+                      <button
+                        key={st.step}
+                        type="button"
+                        onClick={() => onSelectMountStep(st.step)}
+                        className={`px-1.5 py-1 text-[11px] font-medium rounded border transition-colors whitespace-nowrap truncate ${
+                          isCurrent
+                            ? 'bg-blue-600 text-white border-blue-600 font-semibold'
+                            : isMounted
+                              ? 'bg-slate-900 text-white border-slate-900 hover:bg-slate-800'
+                              : 'bg-white text-slate-600 border-slate-200 hover:bg-slate-100'
+                        }`}
+                        title={`${st.title} (${st.pins})`}
+                      >
+                        {st.shortLabel}
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
+
+              {/* Row 2: Exploded Slider & Toggles */}
               <div className="flex flex-wrap items-center justify-between gap-4">
                 {/* Exploded View Slider */}
-                <div className="flex items-center gap-3 flex-1 min-w-[220px]">
+                <div className="flex items-center gap-3 flex-1 min-w-[200px]">
                   <label htmlFor="explode-slider" className="text-xs font-medium text-slate-700 whitespace-nowrap">
                     분해도 (Exploded)
                   </label>
@@ -210,7 +294,7 @@ export function BottomCadDock({
                 </div>
               </div>
 
-              {/* Camera Presets */}
+              {/* Row 3: Camera Presets */}
               <div className="flex flex-wrap items-center gap-1.5">
                 <span className="text-xs text-slate-500 mr-1 whitespace-nowrap">카메라 시점:</span>
                 {CAMERA_LABELS.map((cam) => (
@@ -395,8 +479,9 @@ export function BottomCadDock({
               </div>
             </div>
           )}
+          </div>
         </div>
-      )}
+      </div>
     </div>
   );
 }

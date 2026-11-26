@@ -1,5 +1,5 @@
 import { useCallback, useRef, useState, type PointerEvent, type RefObject, type WheelEvent } from 'react';
-import { BookOpen, Compass, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
+import { BookOpen, Compass, Film, Maximize2, ZoomIn, ZoomOut } from 'lucide-react';
 import {
   HELMET_DIMENSIONS_MM,
   type HazardOutput,
@@ -15,6 +15,7 @@ interface Blueprint2DViewProps {
   weightMetrics: WeightAndCoGMetrics;
   powerMetrics: PowerBudgetMetrics;
   hazard: HazardOutput;
+  onOpenCinematic: () => void;
 }
 
 type PaperTheme = 'ks-mono' | 'autocad' | 'blueprint';
@@ -25,6 +26,7 @@ export function Blueprint2DView({
   modularConfig,
   weightMetrics,
   powerMetrics,
+  onOpenCinematic,
 }: Blueprint2DViewProps) {
   const [docMode, setDocMode] = useState<BlueprintDocMode>('manual');
   const [paperTheme, setPaperTheme] = useState<PaperTheme>('ks-mono');
@@ -198,7 +200,7 @@ export function Blueprint2DView({
               }`}
             >
               <BookOpen className="w-3.5 h-3.5" aria-hidden="true" />
-              레고식 조립 설명서
+              단계별 조립 설명서
             </button>
             <button
               type="button"
@@ -263,91 +265,103 @@ export function Blueprint2DView({
           )}
         </div>
 
-        {docMode === 'cad' && (
-          <div className="flex flex-wrap items-center gap-3">
-            {/* Paper Mode Switcher */}
-            <div className="flex items-center gap-0.5 p-0.5 bg-slate-100 rounded-md">
-              {(
-                [
-                  { id: 'ks-mono', label: 'KS 흑백 도면' },
-                  { id: 'autocad', label: 'AutoCAD 다크' },
-                  { id: 'blueprint', label: '청사진' },
-                ] as const
-              ).map((opt) => (
-                <button
-                  key={opt.id}
-                  type="button"
-                  onClick={() => setPaperTheme(opt.id)}
-                  className={`px-2 py-1 text-[11px] font-medium rounded whitespace-nowrap transition-colors ${
-                    paperTheme === opt.id
-                      ? 'bg-slate-900 text-white'
-                      : 'text-slate-600 hover:text-slate-900'
-                  }`}
-                >
-                  {opt.label}
-                </button>
-              ))}
-            </div>
+        <div className="flex flex-wrap items-center gap-3">
+          {docMode === 'cad' && (
+            <>
+              {/* Paper Mode Switcher */}
+              <div className="flex items-center gap-0.5 p-0.5 bg-slate-100 rounded-md">
+                {(
+                  [
+                    { id: 'ks-mono', label: 'KS 흑백 도면' },
+                    { id: 'autocad', label: 'AutoCAD 다크' },
+                    { id: 'blueprint', label: '청사진' },
+                  ] as const
+                ).map((opt) => (
+                  <button
+                    key={opt.id}
+                    type="button"
+                    onClick={() => setPaperTheme(opt.id)}
+                    className={`px-2 py-1 text-[11px] font-medium rounded whitespace-nowrap transition-colors ${
+                      paperTheme === opt.id
+                        ? 'bg-slate-900 text-white'
+                        : 'text-slate-600 hover:text-slate-900'
+                    }`}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
 
-            {/* Real CAD Layer Toggles */}
-            <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-700">
-              <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
-                <input
-                  type="checkbox"
-                  checked={showPolygonCover}
-                  onChange={(e) => setShowPolygonCover(e.target.checked)}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
-                />
-                폴리곤 외피
-              </label>
-              <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
-                <input
-                  type="checkbox"
-                  checked={showHiddenLines}
-                  onChange={(e) => setShowHiddenLines(e.target.checked)}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
-                />
-                은선
-              </label>
-              <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
-                <input
-                  type="checkbox"
-                  checked={showCenterLines}
-                  onChange={(e) => setShowCenterLines(e.target.checked)}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
-                />
-                중심선
-              </label>
-              <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
-                <input
-                  type="checkbox"
-                  checked={showDimensions}
-                  onChange={(e) => setShowDimensions(e.target.checked)}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
-                />
-                치수선
-              </label>
-              <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
-                <input
-                  type="checkbox"
-                  checked={showSectionHatch}
-                  onChange={(e) => setShowSectionHatch(e.target.checked)}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
-                />
-                A-A 해칭
-              </label>
-              <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
-                <input
-                  type="checkbox"
-                  checked={showCallouts}
-                  onChange={(e) => setShowCallouts(e.target.checked)}
-                  className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
-                />
-                품번
-              </label>
-            </div>
-          </div>
-        )}
+              {/* Real CAD Layer Toggles */}
+              <div className="flex flex-wrap items-center gap-2.5 text-xs text-slate-700">
+                <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={showPolygonCover}
+                    onChange={(e) => setShowPolygonCover(e.target.checked)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                  />
+                  폴리곤 외피
+                </label>
+                <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={showHiddenLines}
+                    onChange={(e) => setShowHiddenLines(e.target.checked)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                  />
+                  은선
+                </label>
+                <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={showCenterLines}
+                    onChange={(e) => setShowCenterLines(e.target.checked)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                  />
+                  중심선
+                </label>
+                <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={showDimensions}
+                    onChange={(e) => setShowDimensions(e.target.checked)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                  />
+                  치수선
+                </label>
+                <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={showSectionHatch}
+                    onChange={(e) => setShowSectionHatch(e.target.checked)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                  />
+                  A-A 해칭
+                </label>
+                <label className="inline-flex items-center gap-1 cursor-pointer select-none whitespace-nowrap">
+                  <input
+                    type="checkbox"
+                    checked={showCallouts}
+                    onChange={(e) => setShowCallouts(e.target.checked)}
+                    className="rounded border-slate-300 text-blue-600 focus:ring-blue-600"
+                  />
+                  품번
+                </label>
+              </div>
+            </>
+          )}
+
+          {/* Discreet Cinematic Showcase Entry tucked inside 2D Blueprint Toolbar */}
+          <button
+            type="button"
+            onClick={onOpenCinematic}
+            className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium text-slate-600 bg-slate-50 hover:bg-slate-100 hover:text-slate-900 border border-slate-200 rounded-md transition-colors whitespace-nowrap"
+          >
+            <Film className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+            시네마틱 영상
+          </button>
+        </div>
       </div>
 
       {docMode === 'manual' ? (

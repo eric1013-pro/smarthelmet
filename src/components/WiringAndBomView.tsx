@@ -8,6 +8,7 @@ import {
   type PowerBudgetMetrics,
   type WeightAndCoGMetrics,
 } from '../engineering/helmetEngine';
+import { InteractiveWiringSimulator } from './InteractiveWiringSimulator';
 
 interface WiringAndBomViewProps {
   modularConfig: ModularConfig;
@@ -189,26 +190,26 @@ const WIRE_HARNESS_ROWS: WireHarnessRow[] = [
     group: 'actuators',
     colorName: '적색',
     colorHex: '#dc2626',
-    signal: 'LED_RED ×3 (경보)',
+    signal: 'LED_RED ×1 (전면 경보)',
     arduinoPin: 'D11 (PWM)',
-    targetModule: '적색 5mm LED ×3 (220Ω 직렬)',
-    targetPin: 'Anode (+) ×3',
+    targetModule: '전면 적색 5mm LED ×1 (220Ω 직렬)',
+    targetPin: 'Anode (+) ×1',
     cableType: 'Dupont M-M 30cm',
     lengthCm: 30,
-    routingPath: '후면 Uno → 좌/우 림 경유 전면 챙 + 양측 LED 바',
+    routingPath: '후면 Uno → 좌측 절연 림 → 전면 이마 단일 베젤',
   },
   {
     id: 'w-led-grn',
     group: 'actuators',
     colorName: '녹색',
     colorHex: '#16a34a',
-    signal: 'LED_GRN ×3 (정상)',
+    signal: 'LED_GRN ×1 (전면 정상)',
     arduinoPin: 'D12',
-    targetModule: '녹색 5mm LED ×3 (150Ω 직렬)',
-    targetPin: 'Anode (+) ×3',
+    targetModule: '전면 녹색 5mm LED ×1 (150Ω 직렬)',
+    targetPin: 'Anode (+) ×1',
     cableType: 'Dupont M-M 30cm',
     lengthCm: 30,
-    routingPath: '후면 Uno → 좌/우 림 경유 전면 챙 + 양측 LED 바',
+    routingPath: '후면 Uno → 우측 절연 림 → 전면 이마 단일 베젤',
   },
   {
     id: 'w-buz-drv',
@@ -228,13 +229,13 @@ const WIRE_HARNESS_ROWS: WireHarnessRow[] = [
     group: 'optional',
     colorName: '녹색',
     colorHex: '#059669',
-    signal: 'DHT11_DATA (온습도)',
+    signal: 'DHT11_DATA (내부 두부)',
     arduinoPin: 'A0 (10kΩ 풀업)',
-    targetModule: 'DHT11 모듈 (우측 후면 슬롯)',
+    targetModule: 'DHT11 내부 두부 온습도 (헬멧 안쪽)',
     targetPin: 'DATA (Pin 2)',
-    cableType: 'Dupont M-F 10cm',
-    lengthCm: 10,
-    routingPath: '후면 Uno → 우측 후면 보조 클립 슬롯',
+    cableType: 'Dupont M-F 20cm',
+    lengthCm: 20,
+    routingPath: '후면 Uno → 내부 서스펜션 틈새 → 헬멧 안쪽 이마-두정부 공간',
   },
   {
     id: 'w-opt-mq2',
@@ -265,15 +266,15 @@ const WIRE_HARNESS_ROWS: WireHarnessRow[] = [
   {
     id: 'w-uart-ext',
     group: 'optional',
-    colorName: '황·녹',
+    colorName: '보라·청록',
     colorHex: '#7c3aed',
-    signal: 'UART TX/RX (9600)',
-    arduinoPin: 'D1(TX) / D0(RX)',
-    targetModule: 'J_UART 4핀 확장 포트 (옵션)',
-    targetPin: 'Pin 1(TX) / 2(RX)',
-    cableType: '4핀 Molex / Dupont',
-    lengthCm: 15,
-    routingPath: '후면 하단 확장 포트 (외부 PC·관제 모듈 착탈식)',
+    signal: 'UART0 TX/RX (9600)',
+    arduinoPin: 'D1(TX) / D0(RX) / GND',
+    targetModule: 'ATmega128 TPK-128V2.4 관제 보드',
+    targetPin: 'PE0(RXD0) / PE1(TXD0) / GND',
+    cableType: '4핀 Dupont M-F / Molex',
+    lengthCm: 30,
+    routingPath: 'Uno TX→PE0, Uno RX←PE1 교차 결선 + 공통 GND 필수 연결',
   },
 ];
 
@@ -288,6 +289,7 @@ export function WiringAndBomView({
   weightMetrics,
   powerMetrics,
 }: WiringAndBomViewProps) {
+  const [wiringViewMode, setWiringViewMode] = useState<'simulator' | 'schematic'>('simulator');
   const [activeGroup, setActiveGroup] = useState<CircuitGroupId>('all');
   const schematicSvgRef = useRef<SVGSVGElement | null>(null);
 
@@ -353,6 +355,11 @@ export function WiringAndBomView({
       title: 'KY-037 소음 감지 모듈 (LM393)',
       meta: '85dBA 건설 현장 소음 감지 확장 슬롯 (A2)',
     },
+    {
+      src: resolvePublicAsset('assets/aistudio/IMG_7178_adceb581.jpeg'),
+      title: 'ATmega128 중앙 관제 보드 (TPK-128V2.4)',
+      meta: '16×2 블루 LCD · 4-Digit 7-Seg · 녹색 LED 8개(Y0~Y7) · 14.7456MHz',
+    },
   ];
 
   // Helper to draw a crisp horizontal zigzag resistor symbol
@@ -385,63 +392,103 @@ export function WiringAndBomView({
   return (
     <div className="h-full overflow-auto bg-slate-50">
       <div className="max-w-[1380px] mx-auto px-6 py-7 space-y-10">
-        {/* Section 01: Pin-Level Arduino Uno R3 Schematic */}
+        {/* Section 01: Interactive 2D Wiring Simulator (ATmega128 + Arduino Uno R3) & Detailed SVG Schematic */}
         <section className="space-y-4">
           <div className="flex flex-wrap items-end justify-between gap-4">
             <div>
               <h2 className="text-xl font-bold text-slate-900 tracking-tight">
-                01. 정밀 핀별 회로도 및 아두이노 배선도 (Arduino Uno R3 스마트 안전모)
+                01. 아두이노 · 센서 · ATmega128 배선 시뮬레이터 및 회로도
               </h2>
               <p className="text-sm text-slate-600 mt-1">
-                전원부(5V 승압·평활) · 보호 소자(220Ω/150Ω/1kΩ · 2N2222 · 1N4148 · 0.1µF 디바운스) · 핀별 직교 배선을 실제 조립 기준으로 정리했습니다.
+                복잡한 센서·아두이노 Uno R3·ATmega128(TPK-128V2.4) 연결을 2D 단계별 배선과 실시간 신호 시뮬레이션으로 쉽게 확인할 수 있습니다.
               </p>
             </div>
-            <button
-              type="button"
-              onClick={handleExportWiringSvg}
-              className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors shrink-0"
-            >
-              <Download className="w-3.5 h-3.5" aria-hidden="true" />
-              배선도 SVG 저장
-            </button>
+            <div className="flex flex-wrap items-center gap-2 shrink-0">
+              <div
+                className="inline-flex items-center p-1 bg-white border border-slate-200 rounded-lg shadow-xs"
+                role="tablist"
+                aria-label="배선도 보기 형식 전환"
+              >
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={wiringViewMode === 'simulator'}
+                  onClick={() => setWiringViewMode('simulator')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                    wiringViewMode === 'simulator'
+                      ? 'bg-blue-600 text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  쉬운 2D 배선 시뮬레이터
+                </button>
+                <button
+                  type="button"
+                  role="tab"
+                  aria-selected={wiringViewMode === 'schematic'}
+                  onClick={() => setWiringViewMode('schematic')}
+                  className={`px-3 py-1.5 text-xs font-semibold rounded-md transition-colors whitespace-nowrap ${
+                    wiringViewMode === 'schematic'
+                      ? 'bg-slate-900 text-white'
+                      : 'text-slate-600 hover:text-slate-900'
+                  }`}
+                >
+                  정밀 핀별 회로도 (SVG)
+                </button>
+              </div>
+              {wiringViewMode === 'schematic' && (
+                <button
+                  type="button"
+                  onClick={handleExportWiringSvg}
+                  className="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold text-white bg-slate-900 rounded-lg hover:bg-slate-800 transition-colors shrink-0"
+                >
+                  <Download className="w-3.5 h-3.5" aria-hidden="true" />
+                  배선도 SVG 저장
+                </button>
+              )}
+            </div>
           </div>
 
-          {/* Interactive Subsystem Highlight Tabs */}
-          <div className="flex flex-wrap items-center justify-between gap-3">
-            <div className="inline-flex flex-wrap items-center gap-1.5" role="tablist" aria-label="회로 계통 하이라이트">
-              {CIRCUIT_TABS.map((tab) => {
-                const active = activeGroup === tab.id;
-                return (
-                  <button
-                    key={tab.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={active}
-                    onClick={() => setActiveGroup(tab.id)}
-                    className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
-                      active
-                        ? 'bg-blue-600 text-white border-blue-600'
-                        : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
-                    }`}
-                  >
-                    {tab.label}
-                  </button>
-                );
-              })}
-            </div>
-            <div className="flex items-center gap-3 text-xs text-slate-600 font-mono-tabular">
-              <span>음속 c({modularConfig.ambientTempC}°C) = {soundSpeed} m/s</span>
-              <span aria-hidden="true">·</span>
-              <span>혹한기 -15°C 미보정 오차 +{winterErr}cm</span>
-            </div>
-          </div>
+          {wiringViewMode === 'simulator' ? (
+            <InteractiveWiringSimulator modularConfig={modularConfig} />
+          ) : (
+            <>
+              {/* Interactive Subsystem Highlight Tabs */}
+              <div className="flex flex-wrap items-center justify-between gap-3">
+                <div className="inline-flex flex-wrap items-center gap-1.5" role="tablist" aria-label="회로 계통 하이라이트">
+                  {CIRCUIT_TABS.map((tab) => {
+                    const active = activeGroup === tab.id;
+                    return (
+                      <button
+                        key={tab.id}
+                        type="button"
+                        role="tab"
+                        aria-selected={active}
+                        onClick={() => setActiveGroup(tab.id)}
+                        className={`px-3 py-1.5 text-xs font-semibold rounded-lg border transition-colors ${
+                          active
+                            ? 'bg-blue-600 text-white border-blue-600'
+                            : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-100'
+                        }`}
+                      >
+                        {tab.label}
+                      </button>
+                    );
+                  })}
+                </div>
+                <div className="flex items-center gap-3 text-xs text-slate-600 font-mono-tabular">
+                  <span>음속 c({modularConfig.ambientTempC}°C) = {soundSpeed} m/s</span>
+                  <span aria-hidden="true">·</span>
+                  <span>혹한기 -15°C 미보정 오차 +{winterErr}cm</span>
+                </div>
+              </div>
 
-          {/* Detailed KiCad / Fritzing-Style Interactive Schematic SVG */}
-          <div className="bg-white border border-slate-200 rounded-lg p-3 overflow-x-auto shadow-xs">
-            <svg
-              ref={schematicSvgRef}
-              viewBox="0 0 1360 770"
-              className="w-full min-w-[1060px] h-auto block"
+              {/* Detailed KiCad / Fritzing-Style Interactive Schematic SVG */}
+              <div className="bg-white border border-slate-200 rounded-lg p-3 overflow-x-auto shadow-xs">
+                <svg
+                  ref={schematicSvgRef}
+                  viewBox="0 0 1360 770"
+                  className="w-full min-w-[1060px] h-auto block"
               xmlns="http://www.w3.org/2000/svg"
               aria-label="Arduino Uno R3 스마트 안전모 정밀 핀별 회로도"
             >
@@ -805,62 +852,47 @@ export function WiringAndBomView({
                 <text x="1190" y="318" fill="#475569" fontSize="9.2" textAnchor="middle" fontFamily="JetBrains Mono, monospace">D1 1N4148 (역기전력 보호)</text>
               </g>
 
-              {/* ==================== SUBSYSTEM 6: RED & GREEN LED ARRAYS (RIGHT MID) ==================== */}
+              {/* ==================== SUBSYSTEM 6: MINIMAL FRONT DUAL LED MODULE (RIGHT MID) ==================== */}
               <g style={{ opacity: opacityFor('actuators'), transition: 'opacity 180ms ease' }}>
                 <rect x="944" y="344" width="388" height="190" rx="6" fill="#f8fafc" stroke="#15803d" strokeWidth="1.8" />
                 <text x="958" y="365" fill="#0f172a" fontSize="12" fontWeight="700">
-                  양방향 시각 경보 LED 어레이 (IEC 60073 · 총 6개)
+                  전면 이마 최적 경고 LED 모듈 (IEC 60073 · 최소화 2개)
+                </text>
+                <text x="958" y="381" fill="#475569" fontSize="9.5" fontFamily="JetBrains Mono, monospace">
+                  전면 단일 베젤 배치 (6→2개) · 소비전력 67% 절감 (60mW) · 전방 180° 가시성
                 </text>
 
-                {/* Red LED Branch from D11 */}
+                {/* Red LED #1 Branch from D11 */}
                 <line x1="856" y1="368" x2="966" y2="368" stroke="#dc2626" strokeWidth="2.2" />
-                <path d="M 966 368 L 966 440" fill="none" stroke="#dc2626" strokeWidth="2" />
-                {[
-                  { label: '전면 챙', y: 390 },
-                  { label: '좌측 림', y: 415 },
-                  { label: '우측 림', y: 440 },
-                ].map((led, idx) => (
-                  <g key={`red-${led.label}`}>
-                    <circle cx="966" cy={led.y} r="2.4" fill="#dc2626" />
-                    <line x1="966" y1={led.y} x2="984" y2={led.y} stroke="#dc2626" strokeWidth="1.6" />
-                    {renderResistorH(984, led.y, '#b91c1c')}
-                    <text x="1003" y={led.y - 7} fill="#b91c1c" fontSize="8.5" fontWeight="700" textAnchor="middle" fontFamily="JetBrains Mono, monospace">220Ω</text>
-                    <line x1="1022" y1={led.y} x2="1050" y2={led.y} stroke="#dc2626" strokeWidth="1.5" />
-                    {renderLedH(1050, led.y, '#dc2626')}
-                    <line x1="1062" y1={led.y} x2="1098" y2={led.y} stroke="#334155" strokeWidth="1.5" />
-                    <circle cx="1098" cy={led.y} r="2.2" fill="#1e293b" />
-                    <text x="1116" y={led.y + 3.5} fill="#0f172a" fontSize="10" fontWeight="600">
-                      RED #{idx + 1} · {led.label} (13.6mA)
-                    </text>
-                  </g>
-                ))}
+                <path d="M 966 368 L 966 418 L 984 418" fill="none" stroke="#dc2626" strokeWidth="2" />
+                <circle cx="966" cy="418" r="2.4" fill="#dc2626" />
+                {renderResistorH(984, 418, '#b91c1c')}
+                <text x="1003" y="408" fill="#b91c1c" fontSize="9" fontWeight="700" textAnchor="middle" fontFamily="JetBrains Mono, monospace">220Ω</text>
+                <line x1="1022" y1="418" x2="1050" y2="418" stroke="#dc2626" strokeWidth="1.6" />
+                {renderLedH(1050, 418, '#dc2626')}
+                <line x1="1062" y1="418" x2="1098" y2="418" stroke="#334155" strokeWidth="1.6" />
+                <circle cx="1098" cy="418" r="2.4" fill="#1e293b" />
+                <text x="1116" y="422" fill="#0f172a" fontSize="10.5" fontWeight="700">
+                  RED #1 · 전면 이마 (13.6mA)
+                </text>
 
-                {/* Green LED Branch from D12 */}
+                {/* Green LED #1 Branch from D12 */}
                 <line x1="856" y1="470" x2="966" y2="470" stroke="#16a34a" strokeWidth="2.2" />
-                <path d="M 966 470 L 966 520" fill="none" stroke="#16a34a" strokeWidth="2" />
-                {[
-                  { label: '전면 챙', y: 470 },
-                  { label: '좌측 림', y: 495 },
-                  { label: '우측 림', y: 520 },
-                ].map((led, idx) => (
-                  <g key={`grn-${led.label}`}>
-                    <circle cx="966" cy={led.y} r="2.4" fill="#16a34a" />
-                    <line x1="966" y1={led.y} x2="984" y2={led.y} stroke="#16a34a" strokeWidth="1.6" />
-                    {renderResistorH(984, led.y, '#15803d')}
-                    <text x="1003" y={led.y - 7} fill="#15803d" fontSize="8.5" fontWeight="700" textAnchor="middle" fontFamily="JetBrains Mono, monospace">150Ω</text>
-                    <line x1="1022" y1={led.y} x2="1050" y2={led.y} stroke="#16a34a" strokeWidth="1.5" />
-                    {renderLedH(1050, led.y, '#16a34a')}
-                    <line x1="1062" y1={led.y} x2="1098" y2={led.y} stroke="#334155" strokeWidth="1.5" />
-                    <circle cx="1098" cy={led.y} r="2.2" fill="#1e293b" />
-                    <text x="1116" y={led.y + 3.5} fill="#0f172a" fontSize="10" fontWeight="600">
-                      GRN #{idx + 1} · {led.label} (13.3mA)
-                    </text>
-                  </g>
-                ))}
+                <line x1="966" y1="470" x2="984" y2="470" stroke="#16a34a" strokeWidth="2" />
+                <circle cx="966" cy="470" r="2.4" fill="#16a34a" />
+                {renderResistorH(984, 470, '#15803d')}
+                <text x="1003" y="460" fill="#15803d" fontSize="9" fontWeight="700" textAnchor="middle" fontFamily="JetBrains Mono, monospace">150Ω</text>
+                <line x1="1022" y1="470" x2="1050" y2="470" stroke="#16a34a" strokeWidth="1.6" />
+                {renderLedH(1050, 470, '#16a34a')}
+                <line x1="1062" y1="470" x2="1098" y2="470" stroke="#334155" strokeWidth="1.6" />
+                <circle cx="1098" cy="470" r="2.4" fill="#1e293b" />
+                <text x="1116" y="474" fill="#0f172a" fontSize="10.5" fontWeight="700">
+                  GRN #1 · 전면 이마 (13.3mA)
+                </text>
 
                 {/* Common LED GND vertical bus cleanly left of text labels */}
-                <line x1="1098" y1="390" x2="1098" y2="526" stroke="#1e293b" strokeWidth="2" />
-                <text x="1098" y="381" fill="#1e293b" fontSize="8.5" fontWeight="700" textAnchor="middle" fontFamily="JetBrains Mono, monospace">GND</text>
+                <line x1="1098" y1="418" x2="1098" y2="508" stroke="#1e293b" strokeWidth="2" />
+                <text x="1098" y="522" fill="#1e293b" fontSize="8.8" fontWeight="700" textAnchor="middle" fontFamily="JetBrains Mono, monospace">COMMON GND</text>
               </g>
 
               {/* ==================== SUBSYSTEM 7: 4-PIN UART EXTENSION HEADER (RIGHT BOTTOM) ==================== */}
@@ -926,6 +958,8 @@ export function WiringAndBomView({
               </g>
             </svg>
           </div>
+            </>
+          )}
         </section>
 
         {/* Section 02: Physical 5-Color Jumper Wire 1:1 Assembly Table */}
@@ -1057,7 +1091,7 @@ export function WiringAndBomView({
                   <td className="py-3 px-4 text-right font-mono-tabular text-slate-800">42g</td>
                   <td className="py-3 px-4 text-right font-mono-tabular text-slate-800">-</td>
                   <td className="py-3 px-4 text-xs text-slate-600 max-w-xs leading-relaxed">
-                    노출된 점퍼 배선·아두이노·센서를 최종 단계에서 깔끔하게 감싸 보호하며, 초음파·LED·부저 부위는 개구부로 확보.
+                    전면 2×LED·초음파 2조·부저만 개구부로 돌출시키고, 5방향 택트 스위치는 외피-모체 틈새에 배치해 충격 시 인접 스위치 연동 눌림을 유도합니다.
                   </td>
                 </tr>
               </tbody>

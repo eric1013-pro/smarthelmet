@@ -1,4 +1,4 @@
-import { Pause, Play, RotateCcw, Square, Video, Volume2, VolumeX } from 'lucide-react';
+import { ArrowLeft, Pause, Play, RotateCcw, Square, Video, Volume2, VolumeX } from 'lucide-react';
 import {
   CINEMATIC_CHAPTERS,
   CINEMATIC_DURATION_SEC,
@@ -17,6 +17,7 @@ interface CinematicOverlayProps {
   recordingPercent: number;
   onStartRecording: () => void;
   onCancelRecording: () => void;
+  onBackToBlueprint: () => void;
   totalWeightG: number;
   batteryHours: number;
 }
@@ -49,6 +50,7 @@ export function CinematicOverlay({
   recordingPercent,
   onStartRecording,
   onCancelRecording,
+  onBackToBlueprint,
   totalWeightG,
   batteryHours,
 }: CinematicOverlayProps) {
@@ -92,8 +94,17 @@ export function CinematicOverlay({
             </p>
           </div>
 
-          {/* Right: Restrained Live Engineering & Hazard Telemetry Strip */}
+          {/* Right: Back to 2D Drawings + Restrained Live Engineering & Hazard Telemetry Strip */}
           <div className="flex flex-col items-end gap-2 shrink-0">
+            <button
+              type="button"
+              onClick={onBackToBlueprint}
+              className="pointer-events-auto inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium text-slate-200 bg-[#0b1019]/85 hover:bg-[#162033] border border-white/15 rounded-lg transition-colors whitespace-nowrap"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" aria-hidden="true" />
+              2D 설계 도면으로 돌아가기
+            </button>
+
             {isRecording && (
               <div className="inline-flex items-center gap-2 px-3 py-1 rounded bg-red-600/90 text-white text-xs font-mono-tabular font-semibold">
                 <span className="w-2 h-2 rounded-full bg-white animate-pulse" aria-hidden="true" />

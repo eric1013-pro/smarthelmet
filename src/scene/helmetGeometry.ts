@@ -46,6 +46,8 @@ export interface SmartHelmetRig {
     mq2: THREE.Group;
     ky037: THREE.Group;
   };
+  mountGuideRing: THREE.Mesh;
+  mountGuideMat: THREE.MeshBasicMaterial;
   applyCadModes: (displayMode: CadDisplayMode, coverMode: ShellCoverMode) => void;
   setStudioTheme: (isCinematic: boolean) => void;
   applyCinematicCoverOpacity: (opacity: number) => void;
@@ -78,10 +80,11 @@ function createGeodesicPolygonCoverGeometry(): THREE.BufferGeometry {
       out.z /= horizLen;
     }
 
-    // Proportions smoothly enclosing the entire white helmet + crown HC-SR04 + rear Arduino Uno R3
-    const x = out.x * 1.46;
-    const z = out.z * 1.78 - 0.12;
-    const y = out.y * 1.78 - 0.02;
+    // Tight tailored geodesic dome enclosing the helmet, Arduino Uno R3, battery, wires, and 5 inter-shell tactiles
+    // while allowing only essential external modules (Front 2× LED, HC-SR04 #1/#2, Buzzer) to protrude cleanly
+    const x = out.x * 1.32;
+    const z = out.z * 1.71 - 0.14;
+    const y = out.y * 1.65 - 0.02;
     return new THREE.Vector3(x, y, z);
   };
 
@@ -232,6 +235,114 @@ function createDht11GrillTexture(): THREE.CanvasTexture {
   ctx.strokeStyle = '#38bdf8';
   ctx.lineWidth = 3;
   ctx.strokeRect(4, 4, 120, 152);
+  const tex = new THREE.CanvasTexture(canvas);
+  tex.colorSpace = THREE.SRGBColorSpace;
+  return tex;
+}
+
+function createFrontLedPcbTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas');
+  canvas.width = 256;
+  canvas.height = 128;
+  const ctx = canvas.getContext('2d')!;
+
+  // FR-4 dark green solder mask
+  ctx.fillStyle = '#0f5132';
+  ctx.fillRect(0, 0, 256, 128);
+
+  // Subtle fiberglass grid sheen
+  ctx.strokeStyle = 'rgba(255,255,255,0.06)';
+  ctx.lineWidth = 1;
+  for (let x = 0; x < 256; x += 16) {
+    ctx.beginPath();
+    ctx.moveTo(x, 0);
+    ctx.lineTo(x, 128);
+    ctx.stroke();
+  }
+  for (let y = 0; y < 128; y += 16) {
+    ctx.beginPath();
+    ctx.moveTo(0, y);
+    ctx.lineTo(256, y);
+    ctx.stroke();
+  }
+
+  // White silkscreen border
+  ctx.strokeStyle = '#e2e8f0';
+  ctx.lineWidth = 2;
+  ctx.strokeRect(6, 6, 244, 116);
+
+  // Copper PCB traces (D11 -> R1 -> RED LED, D12 -> R2 -> GREEN LED, common GND)
+  ctx.strokeStyle = '#eab308';
+  ctx.lineWidth = 3.5;
+  ctx.lineCap = 'round';
+  ctx.lineJoin = 'round';
+
+  // D11 red signal path
+  ctx.beginPath();
+  ctx.moveTo(108, 110);
+  ctx.lineTo(108, 92);
+  ctx.lineTo(66, 92);
+  ctx.lineTo(66, 60);
+  ctx.lineTo(44, 60);
+  ctx.stroke();
+
+  // D12 green signal path
+  ctx.beginPath();
+  ctx.moveTo(148, 110);
+  ctx.lineTo(148, 92);
+  ctx.lineTo(190, 92);
+  ctx.lineTo(190, 60);
+  ctx.lineTo(212, 60);
+  ctx.stroke();
+
+  // Common GND bus
+  ctx.strokeStyle = '#94a3b8';
+  ctx.lineWidth = 3.5;
+  ctx.beginPath();
+  ctx.moveTo(128, 110);
+  ctx.lineTo(128, 32);
+  ctx.moveTo(44, 32);
+  ctx.lineTo(212, 32);
+  ctx.stroke();
+
+  // Gold solder pads
+  const pads = [
+    [44, 32],
+    [44, 60],
+    [212, 32],
+    [212, 60],
+    [88, 92],
+    [168, 92],
+    [108, 110],
+    [128, 110],
+    [148, 110],
+  ];
+  for (const [px, py] of pads) {
+    ctx.beginPath();
+    ctx.arc(px, py, 5, 0, Math.PI * 2);
+    ctx.fillStyle = '#facc15';
+    ctx.fill();
+    ctx.beginPath();
+    ctx.arc(px, py, 2.2, 0, Math.PI * 2);
+    ctx.fillStyle = '#0f172a';
+    ctx.fill();
+  }
+
+  // Crisp silkscreen circuit callouts
+  ctx.fillStyle = '#f8fafc';
+  ctx.font = 'bold 12px monospace';
+  ctx.textAlign = 'center';
+  ctx.fillText('LED-DRV PCB v2', 128, 22);
+  ctx.font = 'bold 10px monospace';
+  ctx.fillText('R1 220Ω', 84, 80);
+  ctx.fillText('R2 150Ω', 172, 80);
+  ctx.fillStyle = '#fca5a5';
+  ctx.fillText('D11', 95, 118);
+  ctx.fillStyle = '#cbd5e1';
+  ctx.fillText('GND', 128, 118);
+  ctx.fillStyle = '#86efac';
+  ctx.fillText('D12', 161, 118);
+
   const tex = new THREE.CanvasTexture(canvas);
   tex.colorSpace = THREE.SRGBColorSpace;
   return tex;
@@ -1201,12 +1312,22 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
   crownInnerGroup.position.set(0, 1.46, 0.06);
 
   const crownTray = new THREE.Mesh(
-    track(new THREE.BoxGeometry(0.76, 0.06, 0.62)),
+    track(new THREE.BoxGeometry(0.64, 0.048, 0.42)),
     mattePolymerMat,
   );
+  crownTray.position.set(0, -0.005, -0.02);
   crownTray.castShadow = true;
   attachCadEdges(crownTray, cadEdgeMat, cadEdgeLines, track, 26);
   crownInnerGroup.add(crownTray);
+
+  // Crown riser pillar for HC-SR04 #1 so twin ultrasonic cans protrude cleanly outside polygon dome
+  const hcTopRiser = new THREE.Mesh(
+    track(new THREE.BoxGeometry(0.46, 0.095, 0.22)),
+    accentBracketMat,
+  );
+  hcTopRiser.position.set(-0.1, 0.072, -0.02);
+  hcTopRiser.castShadow = true;
+  crownInnerGroup.add(hcTopRiser);
 
   const hcTop = buildRealisticHcSr04(
     meshGrillTex,
@@ -1216,7 +1337,7 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     copperPinMat,
     track,
   );
-  hcTop.position.set(-0.1, 0.042, -0.02);
+  hcTop.position.set(-0.1, 0.128, -0.02);
   crownInnerGroup.add(hcTop);
 
   const coneGeo = track(new THREE.ConeGeometry(0.84, 2.0, 32, 1, true));
@@ -1231,19 +1352,26 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
   );
   const ultrasonicConeTop = new THREE.Mesh(coneGeo, coneMat);
   ultrasonicConeTop.rotation.x = Math.PI;
-  ultrasonicConeTop.position.set(-0.1, 1.18, -0.02);
+  ultrasonicConeTop.position.set(-0.1, 1.26, -0.02);
   crownInnerGroup.add(ultrasonicConeTop);
 
-  // Realistic 5V Active Piezo Buzzer + 2N2222 driver PCB
+  // Realistic 5V Active Piezo Buzzer + 2N2222 driver PCB on acoustic riser port
   const buzzerPcb = new THREE.Mesh(track(new THREE.BoxGeometry(0.24, 0.02, 0.24)), pcbGreenMat);
   buzzerPcb.position.set(0.23, 0.04, -0.02);
   crownInnerGroup.add(buzzerPcb);
 
+  const buzzerRiser = new THREE.Mesh(
+    track(new THREE.CylinderGeometry(0.106, 0.112, 0.08, 24)),
+    accentBracketMat,
+  );
+  buzzerRiser.position.set(0.23, 0.09, -0.02);
+  crownInnerGroup.add(buzzerRiser);
+
   const buzzerBody = new THREE.Mesh(
-    track(new THREE.CylinderGeometry(0.095, 0.095, 0.11, 24)),
+    track(new THREE.CylinderGeometry(0.095, 0.095, 0.12, 24)),
     darkHeaderMat,
   );
-  buzzerBody.position.set(0.23, 0.102, -0.02);
+  buzzerBody.position.set(0.23, 0.175, -0.02);
   buzzerBody.castShadow = true;
   crownInnerGroup.add(buzzerBody);
 
@@ -1257,7 +1385,7 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
       }),
     ),
   );
-  buzzerTopCap.position.set(0.23, 0.158, -0.02);
+  buzzerTopCap.position.set(0.23, 0.237, -0.02);
   crownInnerGroup.add(buzzerTopCap);
 
   const transistor = new THREE.Mesh(
@@ -1280,7 +1408,7 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     buzzerRingMat,
   );
   buzzerRing.rotation.x = Math.PI / 2;
-  buzzerRing.position.set(0.23, 0.156, -0.02);
+  buzzerRing.position.set(0.23, 0.235, -0.02);
   crownInnerGroup.add(buzzerRing);
 
   // Glowing acoustic sonar wave ring for cinematic & live hazard buzzer visualization
@@ -1298,11 +1426,18 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     sonarWaveMat,
   );
   sonarWaveMesh.rotation.x = -Math.PI / 2;
-  sonarWaveMesh.position.set(0.23, 0.175, -0.02);
+  sonarWaveMesh.position.set(0.23, 0.255, -0.02);
   sonarWaveMesh.visible = false;
   crownInnerGroup.add(sonarWaveMesh);
 
-  // Crown Tactile Switch (#5) forward-center of crown tray
+  // Crown Tactile Switch (#5) seated inside the ~15mm inter-shell gap between yellow helmet dome & polygon cover
+  const crownTactPad = new THREE.Mesh(
+    track(new THREE.BoxGeometry(0.175, 0.024, 0.175)),
+    accentBracketMat,
+  );
+  crownTactPad.position.set(0.0, -0.056, 0.21);
+  crownInnerGroup.add(crownTactPad);
+
   const crownTact = buildRealisticTactileSwitch(
     pcbGreenMat,
     brushedMetalMat,
@@ -1310,7 +1445,7 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     track,
     0x2563eb,
   );
-  crownTact.group.position.set(0.0, 0.04, 0.21);
+  crownTact.group.position.set(0.0, -0.044, 0.21);
   crownInnerGroup.add(crownTact.group);
 
   helmetAssembly.add(crownInnerGroup);
@@ -1324,8 +1459,8 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     crownInnerGroup,
     {
       partId: 'crown-pod',
-      labelKo: '정수리 상단 모듈 (HC-SR04 #1 · 능동 부저 · 정수리 택트)',
-      sublabel: '상향 30° 낙하물 속도 감지 · 2N2222 구동 95dB 부저 · 정수리 충격 스위치',
+      labelKo: '정수리 상단 모듈 (HC-SR04 #1 · 능동 부저 · 틈새 정수리 택트)',
+      sublabel: '상향 30° 낙하물 감지 · 2N2222 95dB 부저 · 외피-모체 틈새 연동 택트 #5',
       category: 'sensor',
     },
     interactables,
@@ -1399,6 +1534,17 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     rearInnerGroup.add(st);
   }
 
+  // Dual standoff rails extending HC-SR04 #2 rearward so ultrasonic cans protrude outside polygon cover
+  // while Arduino Uno R3 (including USB-B port) & battery stay 100% enclosed inside the rear cavity
+  for (const armX of [-0.18, 0.18]) {
+    const hcRearArm = new THREE.Mesh(
+      track(new THREE.BoxGeometry(0.045, 0.055, 0.28)),
+      accentBracketMat,
+    );
+    hcRearArm.position.set(armX, 0.26, -0.115);
+    rearInnerGroup.add(hcRearArm);
+  }
+
   const hcRear = buildRealisticHcSr04(
     meshGrillTex,
     hcSilkTex,
@@ -1408,7 +1554,7 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     track,
   );
   hcRear.rotation.x = -Math.PI / 2;
-  hcRear.position.set(0, 0.25, -0.105);
+  hcRear.position.set(0, 0.26, -0.245);
   rearInnerGroup.add(hcRear);
 
   const rearConeGeo = track(new THREE.ConeGeometry(0.42, 1.15, 24, 1, true));
@@ -1423,8 +1569,16 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
   );
   const ultrasonicConeRear = new THREE.Mesh(rearConeGeo, rearConeMat);
   ultrasonicConeRear.rotation.x = Math.PI / 2;
-  ultrasonicConeRear.position.set(0, 0.25, -0.78);
+  ultrasonicConeRear.position.set(0, 0.26, -0.92);
   rearInnerGroup.add(ultrasonicConeRear);
+
+  // Rear South Tactile Switch seated cleanly inside the inter-shell gap (helmet <-> rear polygon cover)
+  const southTactPost = new THREE.Mesh(
+    track(new THREE.BoxGeometry(0.14, 0.14, 0.14)),
+    accentBracketMat,
+  );
+  southTactPost.position.set(0, -0.22, -0.09);
+  rearInnerGroup.add(southTactPost);
 
   const southTact = buildRealisticTactileSwitch(
     pcbGreenMat,
@@ -1434,7 +1588,7 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     0x2563eb,
   );
   southTact.group.rotation.x = -Math.PI / 2;
-  southTact.group.position.set(0, -0.26, -0.125);
+  southTact.group.position.set(0, -0.22, -0.17);
   rearInnerGroup.add(southTact.group);
 
   helmetAssembly.add(rearInnerGroup);
@@ -1449,13 +1603,17 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     {
       partId: 'rear-pod',
       labelKo: '후면 제어기 모듈 (Arduino Uno R3 · 2500mAh · HC-SR04 #2)',
-      sublabel: '전후 CoG 균형 배치 · 상부 사각지대 초음파 #2 · 하부 남쪽 택트 스위치',
+      sublabel: '전후 CoG 균형 배치 · 상부 사각지대 초음파 #2 · 틈새 연동 후면 택트(SW2)',
       category: 'mcu',
     },
     interactables,
   );
 
-  // --- 2D. 3-DIRECTION PERIMETER TACTILE SWITCHES (N / E / W) ---
+  // --- 2D. 3-DIRECTION PERIMETER TACTILE SWITCHES (N / E / W) IN INTER-SHELL GAP ---
+  // Seated directly in the ~15mm gap between the yellow helmet shell and outer polygon cover so
+  // external shell deflection triggers both the primary switch and adjacent neighbor switches.
+  const tactPadGeo = track(new THREE.BoxGeometry(0.15, 0.036, 0.15));
+
   const northTact = buildRealisticTactileSwitch(
     pcbGreenMat,
     brushedMetalMat,
@@ -1463,21 +1621,24 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     track,
     0x2563eb,
   );
-  northTact.group.position.set(0, 0.18, 1.42);
+  const northPad = new THREE.Mesh(tactPadGeo, accentBracketMat);
+  northPad.position.y = -0.024;
+  northTact.group.add(northPad);
+  northTact.group.position.set(0, 0.21, 1.405);
   northTact.group.rotation.x = Math.PI / 2;
   helmetAssembly.add(northTact.group);
   explodableParts.push({
     group: northTact.group,
     basePos: northTact.group.position.clone(),
-    explodeOffset: new THREE.Vector3(0, 0.08, 0.52),
+    explodeOffset: new THREE.Vector3(0, 0.08, 0.48),
     stage: 'perimeter',
   });
   tagInspectable(
     northTact.group,
     {
       partId: 'tact-north',
-      labelKo: '전면(북) 충격 감지 택트 스위치 (SW1)',
-      sublabel: 'Arduino D6 · 전면 챙 상단 충돌 및 전도 감지',
+      labelKo: '전면(북) 틈새 연동 택트 스위치 (SW1)',
+      sublabel: 'Arduino D6 · 안전모↔폴리곤 케이스 틈새 배치 · 전면 눌림 시 인접 택트 동시 연동',
       category: 'sensor',
     },
     interactables,
@@ -1490,21 +1651,24 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     track,
     0x2563eb,
   );
-  eastTact.group.position.set(1.2, 0.2, 0.04);
+  const eastPad = new THREE.Mesh(tactPadGeo, accentBracketMat);
+  eastPad.position.y = -0.024;
+  eastTact.group.add(eastPad);
+  eastTact.group.position.set(1.105, 0.22, 0.04);
   eastTact.group.rotation.z = -Math.PI / 2;
   helmetAssembly.add(eastTact.group);
   explodableParts.push({
     group: eastTact.group,
     basePos: eastTact.group.position.clone(),
-    explodeOffset: new THREE.Vector3(0.55, 0.08, 0),
+    explodeOffset: new THREE.Vector3(0.52, 0.08, 0),
     stage: 'perimeter',
   });
   tagInspectable(
     eastTact.group,
     {
       partId: 'tact-east',
-      labelKo: '우측(동) 충격 감지 택트 스위치 (SW3)',
-      sublabel: 'Arduino D8 · 우측 측두부 충격 감지',
+      labelKo: '우측(동) 틈새 연동 택트 스위치 (SW3)',
+      sublabel: 'Arduino D8 · 안전모↔폴리곤 케이스 틈새 배치 · 우측 눌림 시 인접 택트 연동',
       category: 'sensor',
     },
     interactables,
@@ -1517,75 +1681,238 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     track,
     0x2563eb,
   );
-  westTact.group.position.set(-1.2, 0.2, 0.04);
+  const westPad = new THREE.Mesh(tactPadGeo, accentBracketMat);
+  westPad.position.y = -0.024;
+  westTact.group.add(westPad);
+  westTact.group.position.set(-1.105, 0.22, 0.04);
   westTact.group.rotation.z = Math.PI / 2;
   helmetAssembly.add(westTact.group);
   explodableParts.push({
     group: westTact.group,
     basePos: westTact.group.position.clone(),
-    explodeOffset: new THREE.Vector3(-0.55, 0.08, 0),
+    explodeOffset: new THREE.Vector3(-0.52, 0.08, 0),
     stage: 'perimeter',
   });
   tagInspectable(
     westTact.group,
     {
       partId: 'tact-west',
-      labelKo: '좌측(서) 충격 감지 택트 스위치 (SW4)',
-      sublabel: 'Arduino D9 · 좌측 측두부 충격 감지',
+      labelKo: '좌측(서) 틈새 연동 택트 스위치 (SW4)',
+      sublabel: 'Arduino D9 · 안전모↔폴리곤 케이스 틈새 배치 · 좌측 눌림 시 인접 택트 연동',
       category: 'sensor',
     },
     interactables,
   );
 
-  // --- 2E. 6× BIDIRECTIONAL LED MODULES (3 RED + 3 GREEN WITH 220Ω/150Ω RESISTORS) ---
+  // --- 2E. FLUSH-MOUNTED FRONT FOREHEAD DUAL-LED MODULE + CIRCUIT PCB & 3D WIRING ---
+  // Mathematically seated flush on the yellow helmet forehead ridge (x=0, y=0.40, z=1.295, pitch -0.25 rad)
+  // with a curved saddle mount, vertical rim-anchor rail clasping the clip-on band, 220Ω/150Ω axial
+  // current-limiting resistors, silkscreened LED-DRV PCB, 3-pin header, and 3 dedicated jumper wires
+  // (D11 Red, GND Black, D12 Green) routed neatly down into the rim harness.
   const redLedMaterials: THREE.MeshStandardMaterial[] = [];
   const greenLedMaterials: THREE.MeshStandardMaterial[] = [];
+  const frontLedPcbTex = track(createFrontLedPcbTexture());
+  const frontLedPcbMat = track(
+    new THREE.MeshStandardMaterial({
+      map: frontLedPcbTex,
+      roughness: 0.36,
+      metalness: 0.18,
+    }),
+  );
 
   const ledPodConfigs = [
     {
-      name: '전면 챙 LED 모듈 (적1·녹1)',
-      pos: new THREE.Vector3(0, 0.2, 1.38),
+      name: '전면 이마 밀착 경고 LED 모듈 (적1·녹1 · 220Ω/150Ω 회로)',
+      pos: new THREE.Vector3(0, 0.445, 1.272),
+      rotX: -0.27,
       rotY: 0,
-      spacingX: 0.22,
-      explode: new THREE.Vector3(0, 0.16, 0.45),
-    },
-    {
-      name: '우측 측면 LED 모듈 (적1·녹1)',
-      pos: new THREE.Vector3(1.14, 0.26, 0.52),
-      rotY: Math.PI * 0.34,
-      spacingX: 0.095,
-      explode: new THREE.Vector3(0.48, 0.14, 0.22),
-    },
-    {
-      name: '좌측 측면 LED 모듈 (적1·녹1)',
-      pos: new THREE.Vector3(-1.14, 0.26, 0.52),
-      rotY: -Math.PI * 0.34,
-      spacingX: 0.095,
-      explode: new THREE.Vector3(-0.48, 0.14, 0.22),
+      spacingX: 0.145,
+      explode: new THREE.Vector3(0, 0.16, 0.46),
     },
   ];
 
-  const ledDomeGeo = track(new THREE.SphereGeometry(0.042, 16, 12));
-  const ledCylGeo = track(new THREE.CylinderGeometry(0.042, 0.046, 0.048, 16));
-  const resistorGeo = track(new THREE.CylinderGeometry(0.012, 0.012, 0.055, 8));
+  const ledDomeGeo = track(new THREE.SphereGeometry(0.044, 16, 12));
+  const ledCylGeo = track(new THREE.CylinderGeometry(0.044, 0.048, 0.068, 16));
+  const ledCollarGeo = track(new THREE.CylinderGeometry(0.056, 0.062, 0.044, 16));
+  const resistorGeo = track(new THREE.CylinderGeometry(0.013, 0.013, 0.058, 10));
+  const bandRingGeo = track(new THREE.CylinderGeometry(0.014, 0.014, 0.007, 10));
+  const leadWireGeo = track(new THREE.CylinderGeometry(0.0038, 0.0038, 0.03, 6));
+
+  const bandRedMat = track(new THREE.MeshStandardMaterial({ color: 0xdc2626, roughness: 0.4 }));
+  const bandBrownMat = track(new THREE.MeshStandardMaterial({ color: 0x78350f, roughness: 0.45 }));
+  const bandGreenMat = track(new THREE.MeshStandardMaterial({ color: 0x15803d, roughness: 0.4 }));
+  const bandGoldMat = track(
+    new THREE.MeshStandardMaterial({ color: 0xeab308, metalness: 0.78, roughness: 0.24 }),
+  );
 
   for (const cfg of ledPodConfigs) {
     const pod = new THREE.Group();
     pod.position.copy(cfg.pos);
-    pod.rotation.y = cfg.rotY;
+    pod.rotation.set(cfg.rotX, cfg.rotY, 0);
 
-    const pcbWidth = cfg.spacingX * 2 + 0.14;
-    const ledPcb = new THREE.Mesh(
-      track(new THREE.BoxGeometry(pcbWidth, 0.095, 0.025)),
-      pcbGreenMat,
+    const pcbWidth = cfg.spacingX * 2 + 0.16;
+
+    // 1) Contoured forehead saddle cradle embedded seamlessly against helmet dome curve (zero gap)
+    const saddleCore = new THREE.Mesh(
+      track(new THREE.BoxGeometry(pcbWidth + 0.045, 0.165, 0.092)),
+      accentBracketMat,
     );
+    saddleCore.position.set(0, -0.005, -0.044);
+    saddleCore.castShadow = true;
+    attachCadEdges(saddleCore, cadEdgeMat, cadEdgeLines, track, 28);
+    pod.add(saddleCore);
+
+    // Side curved silicone hugger wings pressing smoothly into the yellow shell forehead
+    for (const side of [-1, 1]) {
+      const wing = new THREE.Mesh(
+        track(new THREE.BoxGeometry(0.065, 0.135, 0.088)),
+        mattePolymerMat,
+      );
+      wing.position.set(side * (pcbWidth * 0.5 + 0.036), -0.005, -0.062);
+      wing.rotation.y = side * -0.28;
+      pod.add(wing);
+
+      const screw = new THREE.Mesh(
+        track(new THREE.CylinderGeometry(0.013, 0.013, 0.014, 6)),
+        brushedMetalMat,
+      );
+      screw.rotation.x = Math.PI / 2;
+      screw.position.set(side * (pcbWidth * 0.5 + 0.04), -0.005, -0.014);
+      pod.add(screw);
+    }
+
+    // 2) Slim curved drop anchor rail tucked cleanly against the forehead behind the front tactile switch
+    const dropRail = new THREE.Mesh(
+      track(new THREE.BoxGeometry(0.068, 0.305, 0.026)),
+      mattePolymerMat,
+    );
+    dropRail.position.set(0, -0.23, -0.026);
+    dropRail.castShadow = true;
+    pod.add(dropRail);
+
+    // Lower C-clamp jaw clasping the front clipBand cleanly at world (0, 0.06, 1.385)
+    const rimClamp = new THREE.Mesh(
+      track(new THREE.BoxGeometry(0.115, 0.056, 0.072)),
+      accentBracketMat,
+    );
+    rimClamp.position.set(0, -0.39, -0.008);
+    attachCadEdges(rimClamp, cadEdgeMat, cadEdgeLines, track, 28);
+    pod.add(rimClamp);
+
+    // 3) Silkscreened FR-4 LED Driver Circuit PCB seated in saddle recess
+    const ledPcb = new THREE.Mesh(
+      track(new THREE.BoxGeometry(pcbWidth, 0.138, 0.022)),
+      [
+        pcbGreenMat,
+        pcbGreenMat,
+        pcbGreenMat,
+        pcbGreenMat,
+        frontLedPcbMat,
+        pcbGreenMat,
+      ],
+    );
+    ledPcb.position.set(0, 0, 0.01);
     pod.add(ledPcb);
 
-    for (const rOff of [-cfg.spacingX * 0.48, cfg.spacingX * 0.48]) {
-      const res = new THREE.Mesh(resistorGeo, resistorTanMat);
-      res.rotation.z = Math.PI / 2;
-      res.position.set(rOff, -0.026, 0.02);
-      pod.add(res);
+    // 4) Axial current-limiting resistors with authentic color bands & bent metal leads
+    //    Left: R1 220Ω (Red-Red-Brown-Gold) for Red LED (D11)
+    //    Right: R2 150Ω (Brown-Green-Brown-Gold) for Green LED (D12)
+    const resistorSpecs = [
+      {
+        x: -cfg.spacingX * 0.44,
+        bands: [bandRedMat, bandRedMat, bandBrownMat, bandGoldMat],
+      },
+      {
+        x: cfg.spacingX * 0.44,
+        bands: [bandBrownMat, bandGreenMat, bandBrownMat, bandGoldMat],
+      },
+    ];
+    for (const spec of resistorSpecs) {
+      const rGroup = new THREE.Group();
+      rGroup.position.set(spec.x, -0.026, 0.03);
+      const body = new THREE.Mesh(resistorGeo, resistorTanMat);
+      body.rotation.z = Math.PI / 2;
+      rGroup.add(body);
+      const bandOffsets = [-0.018, -0.006, 0.006, 0.018];
+      spec.bands.forEach((bMat, idx) => {
+        const band = new THREE.Mesh(bandRingGeo, bMat);
+        band.rotation.z = Math.PI / 2;
+        band.position.x = bandOffsets[idx];
+        rGroup.add(band);
+      });
+      for (const endSign of [-1, 1]) {
+        const leadHoriz = new THREE.Mesh(leadWireGeo, brushedMetalMat);
+        leadHoriz.rotation.z = Math.PI / 2;
+        leadHoriz.position.set(endSign * 0.036, 0, 0);
+        const leadPin = new THREE.Mesh(
+          track(new THREE.CylinderGeometry(0.0038, 0.0038, 0.02, 6)),
+          brushedMetalMat,
+        );
+        leadPin.rotation.x = Math.PI / 2;
+        leadPin.position.set(endSign * 0.048, 0, -0.009);
+        rGroup.add(leadHoriz, leadPin);
+      }
+      pod.add(rGroup);
+    }
+
+    // 5) 3-Pin JST/Dupont circuit header at PCB bottom edge (D11 / GND / D12)
+    const headerHousing = new THREE.Mesh(
+      track(new THREE.BoxGeometry(0.088, 0.036, 0.034)),
+      darkHeaderMat,
+    );
+    headerHousing.position.set(0, -0.068, 0.022);
+    pod.add(headerHousing);
+    for (const pinX of [-0.024, 0, 0.024]) {
+      const pin = new THREE.Mesh(
+        track(new THREE.BoxGeometry(0.007, 0.022, 0.007)),
+        copperPinMat,
+      );
+      pin.position.set(pinX, -0.088, 0.022);
+      pod.add(pin);
+    }
+
+    // 6) Dedicated 3-wire insulated jumper bundle (D11 Red, GND Black, D12 Green)
+    //    routed smoothly left & right around the front tactile switch into the rim harness
+    const ledWireSpecs: Array<{
+      x0: number;
+      midX: number;
+      sideTarget: number;
+      yEnd: number;
+      mat: THREE.Material;
+    }> = [
+      { x0: -0.024, midX: -0.115, sideTarget: -0.22, yEnd: -0.285, mat: wireRedMat },
+      { x0: 0.0, midX: 0.11, sideTarget: 0.2, yEnd: -0.305, mat: wireBlackMat },
+      { x0: 0.024, midX: 0.135, sideTarget: 0.23, yEnd: -0.27, mat: wireGreenMat },
+    ];
+    for (const lw of ledWireSpecs) {
+      const wireCurve = new THREE.CatmullRomCurve3([
+        new THREE.Vector3(lw.x0, -0.084, 0.022),
+        new THREE.Vector3(lw.x0 * 1.4, -0.13, 0.015),
+        new THREE.Vector3(lw.midX, -0.175, 0.004),
+        new THREE.Vector3(lw.sideTarget * 0.85, lw.yEnd + 0.03, 0.0),
+        new THREE.Vector3(lw.sideTarget, lw.yEnd, -0.004),
+      ]);
+      const wireMesh = new THREE.Mesh(
+        track(new THREE.TubeGeometry(wireCurve, 18, 0.0068, 6, false)),
+        lw.mat,
+      );
+      pod.add(wireMesh);
+    }
+
+    // Cable-tie clip neatly securing the wiring below the PCB header
+    const wireTie = new THREE.Mesh(
+      track(new THREE.BoxGeometry(0.082, 0.016, 0.038)),
+      darkHeaderMat,
+    );
+    wireTie.position.set(0, -0.125, -0.008);
+    pod.add(wireTie);
+
+    // 7) Protective bezel collars + 5mm High-Brightness Dual LEDs (Red D11 / Green D12)
+    for (const xOff of [-cfg.spacingX, cfg.spacingX]) {
+      const collar = new THREE.Mesh(ledCollarGeo, darkHeaderMat);
+      collar.rotation.x = Math.PI / 2;
+      collar.position.set(xOff, 0.018, 0.036);
+      pod.add(collar);
     }
 
     const redMat = track(
@@ -1599,9 +1926,9 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     redLedMaterials.push(redMat);
     const redStem = new THREE.Mesh(ledCylGeo, redMat);
     redStem.rotation.x = Math.PI / 2;
-    redStem.position.set(-cfg.spacingX, 0.008, 0.04);
+    redStem.position.set(-cfg.spacingX, 0.018, 0.068);
     const redBulb = new THREE.Mesh(ledDomeGeo, redMat);
-    redBulb.position.set(-cfg.spacingX, 0.008, 0.064);
+    redBulb.position.set(-cfg.spacingX, 0.018, 0.102);
     pod.add(redStem, redBulb);
 
     const greenMat = track(
@@ -1615,9 +1942,9 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     greenLedMaterials.push(greenMat);
     const greenStem = new THREE.Mesh(ledCylGeo, greenMat);
     greenStem.rotation.x = Math.PI / 2;
-    greenStem.position.set(cfg.spacingX, 0.008, 0.04);
+    greenStem.position.set(cfg.spacingX, 0.018, 0.068);
     const greenBulb = new THREE.Mesh(ledDomeGeo, greenMat);
-    greenBulb.position.set(cfg.spacingX, 0.008, 0.064);
+    greenBulb.position.set(cfg.spacingX, 0.018, 0.102);
     pod.add(greenStem, greenBulb);
 
     helmetAssembly.add(pod);
@@ -1630,52 +1957,152 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     tagInspectable(
       pod,
       {
-        partId: `led-pod-${cfg.rotY}`,
+        partId: 'led-pod-front-optimal',
         labelKo: cfg.name,
-        sublabel: '5mm 고휘도 LED + 220Ω/150Ω 저항 · IEC 60073 시각 경보',
+        sublabel: '헬멧 이마 곡면 밀착 거치 + 림 클램프 고정 · D11(적·220Ω)/D12(녹·150Ω)/GND 3선 직결 회로',
         category: 'actuator',
       },
       interactables,
     );
   }
 
-  // --- 2F. OPTIONAL SNAP-IN KIT SENSORS (DHT11, MQ-2, KY-037) ---
+  // --- 2F. INTERIOR HEAD DHT11 (FLUSH ON INNER HELMET WALL) + OPTIONAL SNAP-IN KIT SENSORS ---
+  // Mathematically anchored flush against the inner right-forehead dome wall (above inner headband,
+  // inside head ventilation air pocket) so it never floats in mid-air and never clips outside the shell.
+  const dhtTheta = 0.38;
+  const dhtPhi = 0.48;
+  const domeRx = 1.06 * 1.03;
+  const domeRy = 1.06 * 1.26;
+  const domeRz = 1.06 * 1.24;
+  const dhtWallPt = new THREE.Vector3(
+    domeRx * Math.sin(dhtTheta) * Math.cos(dhtPhi),
+    0.08 + domeRy * Math.sin(dhtPhi),
+    domeRz * Math.cos(dhtTheta) * Math.cos(dhtPhi),
+  );
+  const dhtInwardNormal = new THREE.Vector3(
+    -(dhtWallPt.x / (domeRx * domeRx)),
+    -((dhtWallPt.y - 0.08) / (domeRy * domeRy)),
+    -(dhtWallPt.z / (domeRz * domeRz)),
+  ).normalize();
+  const dhtBasisX = new THREE.Vector3()
+    .crossVectors(new THREE.Vector3(0, 1, 0), dhtInwardNormal)
+    .normalize();
+  const dhtBasisY = new THREE.Vector3()
+    .crossVectors(dhtInwardNormal, dhtBasisX)
+    .normalize();
+  const dhtOrientation = new THREE.Matrix4().makeBasis(dhtBasisX, dhtBasisY, dhtInwardNormal);
+
   const dht11Group = new THREE.Group();
-  dht11Group.position.set(1.06, 0.26, -0.58);
-  dht11Group.rotation.y = Math.PI * 0.62;
-  const dhtPcb = new THREE.Mesh(track(new THREE.BoxGeometry(0.15, 0.29, 0.026)), pcbBlueMat);
+  // Inset 0.072 inward along normal so all 4 corners of the flat mounting pad clear the curved dome
+  // sagitta (zero outer shell poke-through!) while the center adhesive boss seats directly onto the inner wall.
+  dht11Group.position.copy(dhtWallPt).addScaledVector(dhtInwardNormal, 0.072);
+  dht11Group.quaternion.setFromRotationMatrix(dhtOrientation);
+
+  // Center silicone adhesive boss pressing directly into the inner yellow helmet wall (zero outer bleed)
+  const dhtWallBoss = new THREE.Mesh(
+    track(new THREE.CylinderGeometry(0.052, 0.058, 0.042, 16)),
+    accentBracketMat,
+  );
+  dhtWallBoss.rotation.x = Math.PI / 2;
+  dhtWallBoss.position.set(0, 0, -0.042);
+
+  // Inner backing cradle plate (safely inside inner dome curvature)
+  const dhtWallPad = new THREE.Mesh(
+    track(new THREE.BoxGeometry(0.175, 0.295, 0.022)),
+    accentBracketMat,
+  );
+  dhtWallPad.position.set(0, 0, -0.012);
+  // Retaining clip rails holding the DHT11 PCB firmly to the inner adhesive cradle
+  const dhtTopClip = new THREE.Mesh(
+    track(new THREE.BoxGeometry(0.185, 0.024, 0.042)),
+    mattePolymerMat,
+  );
+  dhtTopClip.position.set(0, 0.142, 0.0);
+  const dhtBotClip = new THREE.Mesh(
+    track(new THREE.BoxGeometry(0.185, 0.024, 0.042)),
+    mattePolymerMat,
+  );
+  dhtBotClip.position.set(0, -0.142, 0.0);
+
+  const dhtPcb = new THREE.Mesh(track(new THREE.BoxGeometry(0.15, 0.27, 0.022)), pcbBlueMat);
+  dhtPcb.position.set(0, 0, 0.01);
   const dhtCage = new THREE.Mesh(
-    track(new THREE.BoxGeometry(0.125, 0.165, 0.065)),
+    track(new THREE.BoxGeometry(0.128, 0.165, 0.076)),
     track(new THREE.MeshStandardMaterial({ map: dhtGrillTex, color: 0xffffff, roughness: 0.4 })),
   );
-  dhtCage.position.set(0, 0.045, 0.042);
-  const dhtPins = new THREE.Mesh(track(new THREE.BoxGeometry(0.08, 0.035, 0.03)), darkHeaderMat);
-  dhtPins.position.set(0, -0.115, 0.02);
-  dht11Group.add(dhtPcb, dhtCage, dhtPins);
+  dhtCage.position.set(0, 0.038, 0.058);
+  const dhtPins = new THREE.Mesh(track(new THREE.BoxGeometry(0.086, 0.034, 0.028)), darkHeaderMat);
+  dhtPins.position.set(0, -0.112, 0.028);
+  dht11Group.add(dhtWallBoss, dhtWallPad, dhtTopClip, dhtBotClip, dhtPcb, dhtCage, dhtPins);
+
+  // 3-wire internal ribbon harness (5V Red, A0 Green, GND Black) hugging the inner shell wall
+  // cleanly inside the yellow dome down to the inner right helmet rim seam toward Arduino Uno A0
+  const invDhtQuat = dht11Group.quaternion.clone().invert();
+  const toDhtLocal = (worldPt: THREE.Vector3) =>
+    worldPt.clone().sub(dht11Group.position).applyQuaternion(invDhtQuat);
+
+  const dhtInnerWires: Array<{ xPin: number; thetaShift: number; mat: THREE.Material }> = [
+    { xPin: -0.024, thetaShift: -0.015, mat: wireRedMat },
+    { xPin: 0.0, thetaShift: 0.0, mat: wireGreenMat },
+    { xPin: 0.024, thetaShift: 0.015, mat: wireBlackMat },
+  ];
+  for (const dw of dhtInnerWires) {
+    const innerPtAt = (th: number, ph: number, inset: number) => {
+      const p = new THREE.Vector3(
+        domeRx * Math.sin(th) * Math.cos(ph),
+        0.08 + domeRy * Math.sin(ph),
+        domeRz * Math.cos(th) * Math.cos(ph),
+      );
+      const nIn = new THREE.Vector3(
+        -(p.x / (domeRx * domeRx)),
+        -((p.y - 0.08) / (domeRy * domeRy)),
+        -(p.z / (domeRz * domeRz)),
+      ).normalize();
+      return p.addScaledVector(nIn, inset);
+    };
+    const ribbonCurve = new THREE.CatmullRomCurve3([
+      new THREE.Vector3(dw.xPin, -0.125, 0.028),
+      toDhtLocal(innerPtAt(dhtTheta + 0.04 + dw.thetaShift, 0.34, 0.056)),
+      toDhtLocal(innerPtAt(dhtTheta + 0.14 + dw.thetaShift, 0.18, 0.052)),
+      toDhtLocal(innerPtAt(dhtTheta + 0.24 + dw.thetaShift, 0.04, 0.048)),
+      toDhtLocal(new THREE.Vector3(0.74 + dw.xPin, 0.08, 1.02)),
+    ]);
+    const ribbonMesh = new THREE.Mesh(
+      track(new THREE.TubeGeometry(ribbonCurve, 18, 0.0058, 6, false)),
+      dw.mat,
+    );
+    dht11Group.add(ribbonMesh);
+  }
+
   helmetAssembly.add(dht11Group);
   explodableParts.push({
     group: dht11Group,
     basePos: dht11Group.position.clone(),
-    explodeOffset: new THREE.Vector3(0.45, 0.14, -0.28),
+    explodeOffset: new THREE.Vector3(0.42, -0.28, 0.56),
     stage: 'optional',
   });
   tagInspectable(
     dht11Group,
     {
       partId: 'dht11',
-      labelKo: 'DHT11 온습도 센서 (우측 후면 배치)',
-      sublabel: '호흡 습기·MCU 발열 회피 · 음속 c=331.3+0.606T 실시간 보정',
+      labelKo: 'DHT11 헬멧 내부 벽면 밀착 두부 온습도 센서',
+      sublabel: '안전모 안쪽 이마 상단 내벽 밀착 거치 · 내부 3선 리본 배선(5V/A0/GND) · 두부 열스트레스 측정',
       category: 'sensor',
     },
     interactables,
   );
 
   const mq2Group = new THREE.Group();
-  mq2Group.position.set(0.76, 0.18, 1.18);
-  mq2Group.rotation.y = 0.56;
+  mq2Group.position.set(0.87, 0.28, 1.07);
+  mq2Group.rotation.y = 0.62;
+  const mqBackMount = new THREE.Mesh(
+    track(new THREE.BoxGeometry(0.2, 0.15, 0.14)),
+    accentBracketMat,
+  );
+  mqBackMount.position.set(0, 0, -0.08);
   const mqPcb = new THREE.Mesh(track(new THREE.BoxGeometry(0.24, 0.18, 0.026)), pcbBlueMat);
   const mqMeshCyl = new THREE.Mesh(
-    track(new THREE.CylinderGeometry(0.074, 0.074, 0.105, 20)),
+    track(new THREE.CylinderGeometry(0.074, 0.074, 0.125, 20)),
     track(
       new THREE.MeshStandardMaterial({
         map: meshGrillTex,
@@ -1686,15 +2113,15 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     ),
   );
   mqMeshCyl.rotation.x = Math.PI / 2;
-  mqMeshCyl.position.set(0.02, 0.01, 0.065);
+  mqMeshCyl.position.set(0.02, 0.01, 0.076);
   const mqRing = new THREE.Mesh(track(new THREE.TorusGeometry(0.075, 0.008, 8, 20)), copperPinMat);
-  mqRing.position.set(0.02, 0.01, 0.115);
+  mqRing.position.set(0.02, 0.01, 0.136);
   const mqPot = new THREE.Mesh(
     track(new THREE.BoxGeometry(0.055, 0.055, 0.042)),
     track(new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.4 })),
   );
   mqPot.position.set(-0.075, -0.02, 0.032);
-  mq2Group.add(mqPcb, mqMeshCyl, mqRing, mqPot);
+  mq2Group.add(mqBackMount, mqPcb, mqMeshCyl, mqRing, mqPot);
   helmetAssembly.add(mq2Group);
   explodableParts.push({
     group: mq2Group,
@@ -1706,29 +2133,34 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     mq2Group,
     {
       partId: 'mq2',
-      labelKo: 'MQ-2 유해가스·연기 센서 (전면 호흡대 클립)',
-      sublabel: '작업자 호흡면 전방 배치 · LPG/메탄/연기 조기경보 (5V 히터 ~800mW)',
+      labelKo: 'MQ-2 유해가스·연기 센서 (전면 우측 외피 노출 포트)',
+      sublabel: '호흡면 전방 외기 노출 · LPG/메탄/연기 조기경보 (Arduino A1)',
       category: 'sensor',
     },
     interactables,
   );
 
   const ky037Group = new THREE.Group();
-  ky037Group.position.set(-1.06, 0.26, -0.58);
+  ky037Group.position.set(-1.2, 0.34, -0.58);
   ky037Group.rotation.y = -Math.PI * 0.62;
+  const kyBackMount = new THREE.Mesh(
+    track(new THREE.BoxGeometry(0.14, 0.24, 0.12)),
+    accentBracketMat,
+  );
+  kyBackMount.position.set(0, 0, -0.07);
   const kyPcb = new THREE.Mesh(track(new THREE.BoxGeometry(0.16, 0.32, 0.024)), pcbRedMat);
   const kyMic = new THREE.Mesh(
-    track(new THREE.CylinderGeometry(0.046, 0.046, 0.068, 16)),
+    track(new THREE.CylinderGeometry(0.046, 0.046, 0.088, 16)),
     brushedMetalMat,
   );
   kyMic.rotation.x = Math.PI / 2;
-  kyMic.position.set(0, 0.125, 0.042);
+  kyMic.position.set(0, 0.125, 0.054);
   const kyFelt = new THREE.Mesh(
-    track(new THREE.CylinderGeometry(0.038, 0.038, 0.01, 16)),
+    track(new THREE.CylinderGeometry(0.038, 0.038, 0.012, 16)),
     darkHeaderMat,
   );
   kyFelt.rotation.x = Math.PI / 2;
-  kyFelt.position.set(0, 0.125, 0.076);
+  kyFelt.position.set(0, 0.125, 0.098);
   const kyPot = new THREE.Mesh(
     track(new THREE.BoxGeometry(0.072, 0.088, 0.052)),
     track(new THREE.MeshStandardMaterial({ color: 0x2563eb, roughness: 0.4 })),
@@ -1740,7 +2172,7 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
   );
   kyScrew.rotation.x = Math.PI / 2;
   kyScrew.position.set(0, 0.018, 0.064);
-  ky037Group.add(kyPcb, kyMic, kyFelt, kyPot, kyScrew);
+  ky037Group.add(kyBackMount, kyPcb, kyMic, kyFelt, kyPot, kyScrew);
   helmetAssembly.add(ky037Group);
   explodableParts.push({
     group: ky037Group,
@@ -1752,8 +2184,8 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     ky037Group,
     {
       partId: 'ky037',
-      labelKo: 'KY-037 소음 감지 센서 (좌측 귀 높이 배치)',
-      sublabel: '정수리 부저 간섭 최소화 · 85dBA 초과 건설소음 판별',
+      labelKo: 'KY-037 소음 감지 센서 (좌측 후면 외피 노출 마이크 포트)',
+      sublabel: '외부 소음 직접 수음 · 85dBA 초과 건설소음 판별 (Arduino A2)',
       category: 'sensor',
     },
     interactables,
@@ -1777,26 +2209,48 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
   polySeams.scale.set(1.0025, 1.0025, 1.0025);
   polygonCoverGroup.add(polySeams);
 
-  // Precision dark acoustic aperture rings seated flush on top & rear geodesic facets for HC-SR04 #1/#2
+  // Precision dark polymer cutout bezels seated flush on geodesic polygon cover
+  // ONLY for essential external modules (HC-SR04 #1/#2, Buzzer, Front Minimal 2× LED pod).
+  // All 5 tactile switches sit cleanly inside the inter-shell gap, and DHT11 sits inside the helmet interior!
   const apertureMat = track(
     new THREE.MeshStandardMaterial({
       color: 0x1e293b,
-      roughness: 0.55,
-      metalness: 0.25,
+      roughness: 0.52,
+      metalness: 0.28,
     }),
   );
-  const apertureRingGeo = track(new THREE.TorusGeometry(0.088, 0.013, 8, 20));
+  const apertureRingGeo = track(new THREE.TorusGeometry(0.092, 0.016, 10, 22));
+
+  // Crown HC-SR04 #1 twin ultrasonic bezels + Buzzer bezel
   for (const xOff of [-0.225, 0.025]) {
     const topPort = new THREE.Mesh(apertureRingGeo, apertureMat);
     topPort.rotation.x = Math.PI / 2;
-    topPort.position.set(xOff, 1.71, 0.04);
+    topPort.position.set(xOff, 1.622, 0.04);
     polygonCoverGroup.add(topPort);
   }
+  const buzzerBezel = new THREE.Mesh(
+    track(new THREE.TorusGeometry(0.112, 0.016, 10, 24)),
+    apertureMat,
+  );
+  buzzerBezel.rotation.x = Math.PI / 2;
+  buzzerBezel.position.set(0.23, 1.612, 0.04);
+  polygonCoverGroup.add(buzzerBezel);
+
+  // Rear HC-SR04 #2 twin ultrasonic bezels
   for (const xOff of [-0.125, 0.125]) {
     const rearPort = new THREE.Mesh(apertureRingGeo, apertureMat);
-    rearPort.position.set(xOff, 0.59, -1.71);
+    rearPort.position.set(xOff, 0.6, -1.73);
     polygonCoverGroup.add(rearPort);
   }
+
+  // Single Front-Upper Forehead Dual-LED rectangular cutout bezel aligned with forehead pitch
+  const frontLedBezel = new THREE.Mesh(
+    track(new THREE.BoxGeometry(0.48, 0.155, 0.055)),
+    apertureMat,
+  );
+  frontLedBezel.position.set(0, 0.43, 1.485);
+  frontLedBezel.rotation.x = -0.25;
+  polygonCoverGroup.add(frontLedBezel);
 
   helmetAssembly.add(polygonCoverGroup);
   explodableParts.push({
@@ -1810,12 +2264,31 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     polygonCoverGroup,
     {
       partId: 'polygon-finishing-cover',
-      labelKo: '폴리곤 박스 외장 마감 케이스 (탈부착 지오데식 돔)',
-      sublabel: '삼각 다면체 크라프트/폴리곤 마감 외피 · 노출 센서 보호 및 최종 외형 마감 (3D 제거 가능)',
+      labelKo: '폴리곤 박스 외장 마감 케이스 (틈새 택트 연동형)',
+      sublabel: '전면 2×LED·초음파 2조·부저만 외부 노출 · 5방향 택트는 외피-모체 틈새 연동 · DHT11 내부 배치',
       category: 'cover',
     },
     interactables,
   );
+
+  // Glowing Cyan Mounting Alignment Guide Ring (visible during interactive Sensor Mounting Visualization)
+  const mountGuideMat = track(
+    new THREE.MeshBasicMaterial({
+      color: 0x0284c7,
+      transparent: true,
+      opacity: 0.72,
+      side: THREE.DoubleSide,
+      depthWrite: false,
+    }),
+  );
+  const mountGuideRing = new THREE.Mesh(
+    track(new THREE.RingGeometry(0.38, 0.43, 40)),
+    mountGuideMat,
+  );
+  mountGuideRing.rotation.x = -Math.PI / 2;
+  mountGuideRing.position.set(0, 1.56, 0.04);
+  mountGuideRing.visible = false;
+  helmetAssembly.add(mountGuideRing);
 
   // =========================================================
   // 4. TACTILE CAP MAP & CAD DISPLAY / POLYGON COVER MODES
@@ -1912,7 +2385,7 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
     polygonSeamMat.needsUpdate = true;
   };
 
-  applyCadModes('shaded-edges', 'closed');
+  applyCadModes('shaded-edges', 'open');
 
   return {
     root,
@@ -1936,6 +2409,8 @@ export function buildSmartHelmetScene(maxAniso: number): SmartHelmetRig {
       mq2: mq2Group,
       ky037: ky037Group,
     },
+    mountGuideRing,
+    mountGuideMat,
     applyCadModes,
     setStudioTheme,
     applyCinematicCoverOpacity,

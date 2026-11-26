@@ -1,5 +1,11 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { ChevronDown, ChevronRight, Download, FolderTree, RotateCcw, Video } from 'lucide-react';
+import {
+  ChevronDown,
+  Download,
+  FolderTree,
+  RotateCcw,
+  Video,
+} from 'lucide-react';
 import {
   CINEMATIC_DURATION_SEC,
   evaluateCinematicFrame,
@@ -16,6 +22,12 @@ import {
   type ModularConfig,
   type ShellCoverMode,
 } from './engineering/helmetEngine';
+import {
+  DEFAULT_OPEN_MOUNT_STEP,
+  getActiveMountStepMeta,
+  MAX_MOUNT_STEP,
+  MOUNT_STEPS,
+} from './engineering/mountingVisualizer';
 import {
   SmartHelmetViewport,
   type SmartHelmetViewportHandle,
@@ -55,16 +67,21 @@ function playBuzzerBeep(rapid: boolean) {
 
 export default function App() {
   const [mode, setMode] = useState<WorkspaceMode>('3d');
-  const [dockCollapsed, setDockCollapsed] = useState(false);
+  const [dockCollapsed, setDockCollapsed] = useState(true);
+  const [viewportToolsCollapsed, setViewportToolsCollapsed] = useState(true);
+  const [hudCollapsed, setHudCollapsed] = useState(true);
   const [dockTab, setDockTab] = useState<DockTabId>('assembly');
 
   const [explodeFactor, setExplodeFactor] = useState(0);
+  const [mountProgress, setMountProgress] = useState<number>(DEFAULT_OPEN_MOUNT_STEP);
+  const [mountPlaying, setMountPlaying] = useState(false);
+  const [mountVisualizing, setMountVisualizing] = useState(false);
   const [cameraPreset, setCameraPreset] = useState<CameraPresetId>('overview');
   const [cameraPresetTrigger, setCameraPresetTrigger] = useState(0);
   const [displayMode, setDisplayMode] = useState<CadDisplayMode>('shaded-edges');
-  const [coverMode, setCoverMode] = useState<ShellCoverMode>('closed');
+  const [coverMode, setCoverMode] = useState<ShellCoverMode>('open');
   const [treeOpen, setTreeOpen] = useState(false);
-  const [showCones, setShowCones] = useState(true);
+  const [showCones, setShowCones] = useState(false);
   const [audioEnabled, setAudioEnabled] = useState(false);
 
   const [modularConfig, setModularConfig] = useState<ModularConfig>({
@@ -166,6 +183,45 @@ export default function App() {
     return () => cancelAnimationFrame(rafId);
   }, [mode, cinematicPlaying, isRecording]);
 
+  // Smooth Interactive 3D Sensor Mounting Playback Loop (0 -> 6)
+  const lastAutoMountStageRef = useRef<number>(-1);
+  useEffect(() => {
+    if (mode !== '3d' || !mountPlaying) return;
+
+    let rafId = 0;
+    let prevNow = performance.now();
+
+    const tick = (now: number) => {
+      const dt = Math.min(0.08, Math.max(0.001, (now - prevNow) / 1000));
+      prevNow = now;
+
+      setMountProgress((prev) => {
+        const next = Math.min(MAX_MOUNT_STEP, prev + dt * 0.65);
+        const stepIdx = Math.min(MAX_MOUNT_STEP, Math.ceil(next - 0.001));
+        if (stepIdx !== lastAutoMountStageRef.current && stepIdx >= 0) {
+          lastAutoMountStageRef.current = stepIdx;
+          const stepMeta = MOUNT_STEPS[stepIdx];
+          if (stepMeta) {
+            setCameraPreset(stepMeta.camera);
+            setCameraPresetTrigger((c) => c + 1);
+          }
+        }
+        if (next > DEFAULT_OPEN_MOUNT_STEP + 0.02) {
+          setCoverMode('closed');
+        }
+        if (next >= MAX_MOUNT_STEP) {
+          setMountPlaying(false);
+        }
+        return next;
+      });
+
+      rafId = requestAnimationFrame(tick);
+    };
+
+    rafId = requestAnimationFrame(tick);
+    return () => cancelAnimationFrame(rafId);
+  }, [mode, mountPlaying]);
+
   // Optional audio piezo beep when hazard becomes active (both CAD and Cinematic Chapter 5)
   const activeBuzzerRapid =
     mode === 'cinematic'
@@ -203,6 +259,51 @@ export default function App() {
     setCameraPreset(preset);
     setCameraPresetTrigger((c) => c + 1);
   }, []);
+
+  const handleChangeCoverMode = useCallback((nextCover: ShellCoverMode) => {
+    setCoverMode(nextCover);
+    setMountPlaying(false);
+    if (nextCover !== 'open') {
+      setMountProgress((prev) => (prev < MAX_MOUNT_STEP ? MAX_MOUNT_STEP : prev));
+    } else {
+      setMountProgress((prev) => (prev > DEFAULT_OPEN_MOUNT_STEP ? DEFAULT_OPEN_MOUNT_STEP : prev));
+    }
+  }, []);
+
+  const handleSelectMountStep = useCallback((step: number) => {
+    const clamped = Math.max(0, Math.min(MAX_MOUNT_STEP, step));
+    setMountPlaying(false);
+    setMountVisualizing(true);
+    setExplodeFactor(0);
+    setMountProgress(clamped);
+    if (clamped >= MAX_MOUNT_STEP) {
+      setCoverMode('closed');
+    } else {
+      setCoverMode('open');
+    }
+    const meta = MOUNT_STEPS[clamped];
+    if (meta) {
+      setCameraPreset(meta.camera);
+      setCameraPresetTrigger((c) => c + 1);
+    }
+  }, []);
+
+  const handleToggleMountPlay = useCallback(() => {
+    setMountPlaying((prev) => {
+      if (!prev) {
+        setMountVisualizing(true);
+        setExplodeFactor(0);
+        if (mountProgress >= MAX_MOUNT_STEP - 0.05 || mountProgress === DEFAULT_OPEN_MOUNT_STEP) {
+          lastAutoMountStageRef.current = 0;
+          setMountProgress(0);
+          setCoverMode('open');
+          setCameraPreset('overview');
+          setCameraPresetTrigger((c) => c + 1);
+        }
+      }
+      return !prev;
+    });
+  }, [mountProgress]);
 
   const handleResetSafe = useCallback(() => {
     if (fallingTimerRef.current !== null) {
@@ -377,28 +478,24 @@ export default function App() {
           SmartHelmet CAD
         </a>
 
-        {/* Zone 2: Clean Text Navigation Links */}
+        {/* Zone 2: Clean Text Navigation Links (Cinematic Video is tucked inside 2D Design Drawings) */}
         <nav className="flex items-center gap-6 text-sm font-medium" aria-label="작업 공간 전환">
           {(
             [
               { id: '3d', label: '3D 모델링' },
-              { id: 'cinematic', label: '시네마틱 영상' },
               { id: '2d', label: '2D 설계 도면' },
               { id: 'wiring', label: '부품 및 배선도' },
             ] as const
           ).map((item) => {
-            const active = mode === item.id;
+            const active =
+              mode === item.id || (item.id === '2d' && mode === 'cinematic');
             return (
               <button
                 key={item.id}
                 type="button"
                 onClick={() => {
-                  if (item.id === 'cinematic') {
-                    handleOpenCinematic();
-                  } else {
-                    if (isRecording) handleCancelRecording();
-                    setMode(item.id);
-                  }
+                  if (isRecording) handleCancelRecording();
+                  setMode(item.id);
                 }}
                 className={`py-4 border-b-2 transition-colors whitespace-nowrap shrink-0 ${
                   active
@@ -467,6 +564,8 @@ export default function App() {
           <div className="w-full h-full relative">
             <SmartHelmetViewport
               explodeFactor={explodeFactor}
+              mountProgress={mountProgress}
+              mountVisualizing={mountVisualizing}
               cameraPreset={cameraPreset}
               cameraPresetTrigger={cameraPresetTrigger}
               displayMode={displayMode}
@@ -497,140 +596,224 @@ export default function App() {
                 recordingPercent={recordingPercent}
                 onStartRecording={handleStartRecording}
                 onCancelRecording={handleCancelRecording}
+                onBackToBlueprint={() => {
+                  if (isRecording) handleCancelRecording();
+                  setMode('2d');
+                }}
                 totalWeightG={weightMetrics.totalG}
                 batteryHours={powerMetrics.batteryHours}
               />
             ) : (
               <>
-                {/* Top-Right SolidWorks/Fusion360 Style ViewCube + Cover & Shading Controls */}
+                {/* Top-Right Collapsible ViewCube + Cover & Shading Controls */}
                 <CadViewportTools
+                  collapsed={viewportToolsCollapsed}
+                  onToggleCollapse={() => setViewportToolsCollapsed((c) => !c)}
                   cameraPreset={cameraPreset}
                   onSelectCamera={handleSelectCamera}
                   displayMode={displayMode}
                   onChangeDisplayMode={setDisplayMode}
                   coverMode={coverMode}
-                  onChangeCoverMode={setCoverMode}
+                  onChangeCoverMode={handleChangeCoverMode}
                 />
 
-            {/* Minimal Top-Left Helmet Telemetry & Collapsible CAD Assembly Tree */}
-            <div className="pointer-events-none absolute top-4 left-4 z-10 w-[300px] max-w-[calc(100vw-220px)] space-y-2">
-              <div className="pointer-events-auto bg-white border border-slate-200 rounded-lg px-3.5 py-2.5 shadow-xs">
-                <div className="flex items-center justify-between gap-4">
-                  <span className="text-xs font-semibold text-slate-900">
-                    {hazard.alertTitleKo}
-                  </span>
-                  <span
-                    className={`text-[11px] font-mono-tabular font-semibold ${
-                      hazard.severity === 'CRITICAL'
-                        ? 'text-red-600'
-                        : hazard.severity === 'WARNING'
-                          ? 'text-amber-700'
-                          : 'text-emerald-700'
-                    }`}
-                  >
-                    {hazard.severity}
-                  </span>
-                </div>
-                <p className="text-xs text-slate-600 mt-0.5 leading-snug">
-                  {hazard.alertDetailKo}
-                </p>
-                {/* Compact Helmet Sensor & Actuator Telemetry Line */}
-                <div
-                  className="mt-2 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] font-mono-tabular text-slate-600"
-                  aria-label="헬멧 센서 및 경보 상태"
-                >
-                  <span>
-                    LED{' '}
-                    <strong className={hazard.helmetRedHz > 0 ? 'text-red-600' : 'text-emerald-700'}>
-                      {hazard.helmetRedHz > 0 ? `적색 ${hazard.helmetRedHz}Hz` : '녹색 정상'}
-                    </strong>
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    부저{' '}
-                    <strong className={hazard.buzzerMode !== 'OFF' ? 'text-amber-700' : 'text-slate-800'}>
-                      {hazard.buzzerMode === 'RAPID'
-                        ? '고속경보'
-                        : hazard.buzzerMode === 'INTERMITTENT'
-                          ? '간헐경보'
-                          : '대기'}
-                    </strong>
-                  </span>
-                  <span aria-hidden="true">·</span>
-                  <span>
-                    후면 <strong className="text-slate-900">{modularConfig.rearObstacleCm}cm</strong>
-                  </span>
-                </div>
-              </div>
-
-              {/* Collapsible CAD Assembly Feature Tree */}
-              <div className="pointer-events-auto bg-white border border-slate-200 rounded-lg shadow-xs overflow-hidden">
+            {/* Minimal Smooth-Animated Collapsible Top-Left Helmet Status & Assembly Tree */}
+            <div className="pointer-events-none absolute top-4 left-4 z-10 flex flex-col items-start gap-2 max-w-[calc(100vw-220px)]">
+              <div
+                className={`pointer-events-auto cad-panel-surface bg-white border border-slate-200 rounded-xl shadow-xs overflow-hidden ${
+                  hudCollapsed ? 'w-[144px]' : 'w-[300px]'
+                }`}
+              >
                 <button
                   type="button"
-                  onClick={() => setTreeOpen((v) => !v)}
-                  aria-expanded={treeOpen}
-                  className="w-full px-3.5 py-2 flex items-center justify-between text-xs font-semibold text-slate-800 hover:bg-slate-50 transition-colors"
+                  onClick={() => setHudCollapsed((c) => !c)}
+                  aria-expanded={!hudCollapsed}
+                  aria-label={hudCollapsed ? '상태 · 트리 펼치기' : '상태 · 트리 접기'}
+                  className="w-full px-3 py-2 flex items-center justify-between gap-2 text-xs font-semibold text-slate-800 hover:bg-slate-50/90 active:scale-[0.99] transition-colors cursor-pointer"
                 >
-                  <span className="inline-flex items-center gap-1.5">
-                    <FolderTree className="w-3.5 h-3.5 text-blue-600" aria-hidden="true" />
-                    어셈블리 트리 (폴리곤 케이스 · 센서)
+                  <span className="inline-flex items-center gap-2 min-w-0">
+                    <ChevronDown
+                      data-open={!hudCollapsed}
+                      className="cad-chevron w-3.5 h-3.5 text-slate-500 shrink-0"
+                      aria-hidden="true"
+                    />
+                    <span
+                      className={`w-2 h-2 rounded-full shrink-0 ${
+                        hazard.severity === 'CRITICAL'
+                          ? 'bg-red-500'
+                          : hazard.severity === 'WARNING'
+                            ? 'bg-amber-500'
+                            : 'bg-emerald-500'
+                      }`}
+                      aria-hidden="true"
+                    />
+                    <span className="truncate">
+                      {hudCollapsed
+                        ? hazard.severity === 'SAFE'
+                          ? '상태 · 트리'
+                          : hazard.alertTitleKo
+                        : hazard.alertTitleKo}
+                    </span>
                   </span>
-                  {treeOpen ? (
-                    <ChevronDown className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
-                  ) : (
-                    <ChevronRight className="w-3.5 h-3.5 text-slate-500" aria-hidden="true" />
+                  {!hudCollapsed && (
+                    <span
+                      className={`text-[11px] font-mono-tabular font-semibold shrink-0 ${
+                        hazard.severity === 'CRITICAL'
+                          ? 'text-red-600'
+                          : hazard.severity === 'WARNING'
+                            ? 'text-amber-700'
+                            : 'text-emerald-700'
+                      }`}
+                    >
+                      {hazard.severity}
+                    </span>
                   )}
                 </button>
-                {treeOpen && (
-                  <ul className="border-t border-slate-100 divide-y divide-slate-100 text-[11px]">
-                    {(
-                      [
-                        {
-                          label: '① 폴리곤 마감 케이스 (지오데식 외피 · 반투명 보기)',
-                          cam: 'overview' as CameraPresetId,
-                          cover: 'translucent' as ShellCoverMode,
-                        },
-                        {
-                          label: '② 정수리 센서 모듈 (HC-SR04 #1 · 능동 부저 · 택트)',
-                          cam: 'crown' as CameraPresetId,
-                          cover: 'open' as ShellCoverMode,
-                        },
-                        {
-                          label: '③ 후면 MCU 모듈 (Arduino Uno R3 · 2500mAh · HC #2)',
-                          cam: 'rear' as CameraPresetId,
-                          cover: 'open' as ShellCoverMode,
-                        },
-                        {
-                          label: '④ 전면·측면 5방향 택트 & 양방향 LED (6개)',
-                          cam: 'front' as CameraPresetId,
-                          cover: 'open' as ShellCoverMode,
-                        },
-                        {
-                          label: '⑤ 확장 센서 슬롯 (DHT11 · MQ-2 · KY-037)',
-                          cam: 'side' as CameraPresetId,
-                          cover: 'open' as ShellCoverMode,
-                        },
-                      ] as const
-                    ).map((node) => (
-                      <li key={node.label}>
-                        <button
-                          type="button"
-                          onClick={() => {
-                            handleSelectCamera(node.cam);
-                            setCoverMode(node.cover);
-                          }}
-                          className="w-full text-left px-3.5 py-1.5 text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors"
-                        >
-                          {node.label}
-                        </button>
-                      </li>
-                    ))}
-                  </ul>
-                )}
+
+                <div className="cad-drawer-grid" data-open={!hudCollapsed} aria-hidden={hudCollapsed}>
+                  <div className="cad-drawer-inner">
+                    <div className="px-3.5 pb-2.5 pt-2 border-t border-slate-100">
+                      <p className="text-xs text-slate-600 leading-snug">
+                        {hazard.alertDetailKo}
+                      </p>
+                      {/* Compact Helmet Sensor & Actuator Telemetry Line */}
+                      <div
+                        className="mt-2 pt-2 border-t border-slate-100 flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px] font-mono-tabular text-slate-600"
+                        aria-label="헬멧 센서 및 경보 상태"
+                      >
+                        <span>
+                          LED{' '}
+                          <strong className={hazard.helmetRedHz > 0 ? 'text-red-600' : 'text-emerald-700'}>
+                            {hazard.helmetRedHz > 0 ? `적색 ${hazard.helmetRedHz}Hz` : '녹색 정상'}
+                          </strong>
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          부저{' '}
+                          <strong className={hazard.buzzerMode !== 'OFF' ? 'text-amber-700' : 'text-slate-800'}>
+                            {hazard.buzzerMode === 'RAPID'
+                              ? '고속경보'
+                              : hazard.buzzerMode === 'INTERMITTENT'
+                                ? '간헐경보'
+                                : '대기'}
+                          </strong>
+                        </span>
+                        <span aria-hidden="true">·</span>
+                        <span>
+                          후면 <strong className="text-slate-900">{modularConfig.rearObstacleCm}cm</strong>
+                        </span>
+                      </div>
+                    </div>
+
+                    {/* Smooth Nested Collapsible CAD Assembly Feature Tree */}
+                    <div className="border-t border-slate-200/80 bg-slate-50/60">
+                      <button
+                        type="button"
+                        tabIndex={hudCollapsed ? -1 : 0}
+                        onClick={() => setTreeOpen((v) => !v)}
+                        aria-expanded={treeOpen}
+                        className="w-full px-3 py-2 flex items-center gap-2 text-xs font-semibold text-slate-800 hover:bg-slate-100/70 transition-colors cursor-pointer"
+                      >
+                        <ChevronDown
+                          data-open={treeOpen}
+                          className="cad-chevron w-3.5 h-3.5 text-slate-500 shrink-0"
+                          aria-hidden="true"
+                        />
+                        <FolderTree className="w-3.5 h-3.5 text-blue-600 shrink-0" aria-hidden="true" />
+                        <span className="truncate">어셈블리 트리 (폴리곤 케이스 · 센서)</span>
+                      </button>
+                      <div
+                        className="cad-drawer-grid"
+                        data-open={!hudCollapsed && treeOpen}
+                        aria-hidden={hudCollapsed || !treeOpen}
+                      >
+                        <div className="cad-drawer-inner">
+                          <ul className="border-t border-slate-100 bg-white divide-y divide-slate-100 text-[11px]">
+                            {(
+                              [
+                                {
+                                  label: '① 폴리곤 마감 케이스 (지오데식 외피 · 반투명 보기)',
+                                  cam: 'overview' as CameraPresetId,
+                                  cover: 'translucent' as ShellCoverMode,
+                                },
+                                {
+                                  label: '② 정수리 센서 모듈 (HC-SR04 #1 · 능동 부저 · 틈새 택트)',
+                                  cam: 'crown' as CameraPresetId,
+                                  cover: 'open' as ShellCoverMode,
+                                },
+                                {
+                                  label: '③ 후면 MCU 모듈 (Arduino Uno R3 · 2500mAh · HC #2)',
+                                  cam: 'rear' as CameraPresetId,
+                                  cover: 'open' as ShellCoverMode,
+                                },
+                                {
+                                  label: '④ 전면 밀착 2×LED 회로 & 외피-모체 틈새 5방향 택트',
+                                  cam: 'front' as CameraPresetId,
+                                  cover: 'open' as ShellCoverMode,
+                                },
+                                {
+                                  label: '⑤ 헬멧 내벽 밀착 온습도(DHT11) · 확장 센서 슬롯',
+                                  cam: 'overview' as CameraPresetId,
+                                  cover: 'open' as ShellCoverMode,
+                                },
+                              ] as const
+                            ).map((node) => (
+                              <li key={node.label}>
+                                <button
+                                  type="button"
+                                  tabIndex={!hudCollapsed && treeOpen ? 0 : -1}
+                                  onClick={() => {
+                                    handleSelectCamera(node.cam);
+                                    handleChangeCoverMode(node.cover);
+                                  }}
+                                  className="w-full text-left px-3.5 py-1.5 text-slate-700 hover:bg-blue-50 hover:text-blue-700 transition-colors cursor-pointer"
+                                >
+                                  {node.label}
+                                </button>
+                              </li>
+                            ))}
+                          </ul>
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                </div>
               </div>
 
+              {mountVisualizing && (() => {
+                const activeMount = getActiveMountStepMeta(mountProgress);
+                return (
+                  <div className="pointer-events-auto cad-animate-in w-[300px] bg-white border border-blue-200 rounded-xl px-3.5 py-2.5 shadow-xs">
+                    <div className="flex items-start justify-between gap-2">
+                      <div>
+                        <div className="text-[11px] font-mono-tabular font-semibold text-blue-700">
+                          장착 단계 {activeMount.step} / {MAX_MOUNT_STEP} · {activeMount.pins}
+                        </div>
+                        <div className="text-xs font-bold text-slate-900 mt-0.5">
+                          {activeMount.title}
+                        </div>
+                        <div className="text-[11px] text-slate-600 mt-0.5 leading-snug">
+                          {activeMount.detail}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        onClick={() => {
+                          setMountPlaying(false);
+                          setMountVisualizing(false);
+                        }}
+                        aria-label="장착 가이드 닫기"
+                        className="text-xs text-slate-400 hover:text-slate-700 px-1"
+                      >
+                        ×
+                      </button>
+                    </div>
+                  </div>
+                );
+              })()}
+
               {inspectedPart && (
-                <div className="pointer-events-auto bg-white border border-slate-200 rounded-lg px-3.5 py-2 shadow-xs">
+                <div className="pointer-events-auto cad-animate-in w-[300px] bg-white border border-slate-200 rounded-xl px-3.5 py-2 shadow-xs">
                   <div className="flex items-start justify-between gap-3">
                     <div>
                       <div className="text-xs font-semibold text-slate-900">
@@ -661,12 +844,17 @@ export default function App() {
               onChangeTab={setDockTab}
               explodeFactor={explodeFactor}
               onChangeExplode={setExplodeFactor}
+              mountProgress={mountProgress}
+              mountPlaying={mountPlaying}
+              mountVisualizing={mountVisualizing}
+              onSelectMountStep={handleSelectMountStep}
+              onToggleMountPlay={handleToggleMountPlay}
               cameraPreset={cameraPreset}
               onSelectCamera={handleSelectCamera}
               showCones={showCones}
               onToggleCones={setShowCones}
               coverMode={coverMode}
-              onChangeCoverMode={setCoverMode}
+              onChangeCoverMode={handleChangeCoverMode}
               modularConfig={modularConfig}
               onChangeModularConfig={handleUpdateModularConfig}
               weightMetrics={weightMetrics}
@@ -692,6 +880,7 @@ export default function App() {
             weightMetrics={weightMetrics}
             powerMetrics={powerMetrics}
             hazard={hazard}
+            onOpenCinematic={handleOpenCinematic}
           />
         )}
 
